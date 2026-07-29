@@ -12,7 +12,7 @@ import {
   nudge, reroll, freeze, cloneFace, setFace, split,
   DEFAULT_BAG, DEFAULT_LOADOUT, type ResolveEvent,
 } from './engine/combat.js';
-import { SKILLS, SKILL_LIST, previewSlot, canSlot, costLabel, diceInSlot } from './engine/skills.js';
+import { SKILLS, SKILL_LIST, previewSlot, canSlot, costLabel, diceInSlot, sigmaPotential } from './engine/skills.js';
 import { DICE_DEFS, DICE_LIST, facesOf, crownOf } from './engine/dice.js';
 import { ENEMY_LIST, intentLabel, intentIcon } from './engine/enemy.js';
 import { nudgeCost, FLAT_COSTS, VERB_BLURB, type SlipVerb } from './engine/slip.js';
@@ -133,9 +133,10 @@ function renderSlots(): void {
     const p = slotPreview(i);
     const occupants = diceInSlot(state, i);
 
-    // The key affordance: legal slots glow teal, Sigma-making slots glow gold.
+    // The key affordance: legal slots glow teal, slots where Sigma is still
+    // reachable glow gold — checked on the first die, not just the last.
     const legal = die ? canSlot(state, die, i) : false;
-    const wouldSigma = legal && p.tier !== 'NONE';
+    const wouldSigma = legal && !!die && sigmaPotential(state, die, i);
     const cls = [
       'slot',
       !skill ? 'empty-skill' : '',
@@ -570,5 +571,17 @@ function bindOnce(): void {
 
 // ------------------------------------------------------------------ boot
 
+// The log and the test rig are disclosures so they cost no vertical space on a
+// phone. On a wide screen there's room, so open them — the CSS hides the test
+// rig's summary there, and a closed <details> hides its contents regardless of
+// CSS, so this has to be set on the element itself.
+function openPanelsOnWideScreens(): void {
+  if (window.matchMedia('(min-width: 900px)').matches) {
+    ($('debugwrap') as HTMLDetailsElement).open = true;
+    ($('logwrap') as HTMLDetailsElement).open = true;
+  }
+}
+
+openPanelsOnWideScreens();
 bindOnce();
 start();

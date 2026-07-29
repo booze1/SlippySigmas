@@ -2,6 +2,7 @@
 
 import type { Die, Skill, SkillCost, SlotPreview, GameState } from './types.js';
 import { evaluateSigma } from './sigma.js';
+import { crownOf } from './dice.js';
 import { SKILLS as SKILL_DATA } from '../data/skills.js';
 
 export const SKILLS: Record<string, Skill> = Object.fromEntries(
@@ -112,6 +113,34 @@ export function previewSlot(
   }
 
   return out;
+}
+
+/**
+ * Could placing this die here still lead to a SIGMA?
+ *
+ * Not "is it a Sigma right now" — that only becomes true on the *last* die,
+ * which is far too late to be useful. The player is deciding where the FIRST
+ * die goes, so the gold glow has to answer "is Sigma still reachable from
+ * here", checking that matching faces actually remain in the tray rather than
+ * promising something the bag can't deliver.
+ */
+export function sigmaPotential(state: GameState, die: Die, slotIndex: number): boolean {
+  const skill = SKILLS[state.slots[slotIndex]?.skillKey ?? ''];
+  if (!skill) return false;
+
+  const occupants = diceInSlot(state, slotIndex);
+  if (occupants.some((d) => d.face !== die.face)) return false;
+
+  const need = skill.cost.count - occupants.length - 1;
+  if (need < 0) return false;
+
+  // A lone die only Sigmas at its crown face.
+  if (skill.cost.count === 1) return die.face === crownOf(die);
+
+  const matchesLeft = state.dice.filter(
+    (d) => d.id !== die.id && d.slot === null && !d.jammed && d.face === die.face && dieMeetsCost(d, skill.cost),
+  ).length;
+  return matchesLeft >= need;
 }
 
 /**

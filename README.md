@@ -23,16 +23,31 @@ But you'll rarely roll a triple. What you have instead is **SLIP** — a currenc
 **Phase 1 built and playable.** The design bible is complete; the combat core
 is implemented and the balance numbers have been validated by simulation.
 
+### Play it
+
+**On a phone:** the deployed build lives on GitHub Pages once Pages is enabled
+for this repo (Settings → Pages → Source: **GitHub Actions**). The workflow in
+`.github/workflows/pages.yml` builds and publishes on every push.
+
+**Locally:**
 ```bash
 npm install
-npm run dev     # play the Phase 1 feel test
-npm run sim     # run the headless balance probe
+npm run dev       # play the Phase 1 feel test
+npm run sim       # run the headless balance probe
+npm run artifact  # build dist/slippy-sigmas.html — one self-contained file
 ```
 
 The feel test is one screen: your dice tray, four skill slots, one enemy, and
-the full Slip verb set. The panel on the right lets you swap your bag, loadout
-and opponent live — try `3 × Sigma Stone` against `Mid` and watch what
-consistency does to a fight.
+the full Slip verb set. It is built mobile-first — dice and Slip verbs sit in
+the thumb zone, information sits above them. The **Feel-test controls** panel
+lets you swap your bag, loadout and opponent live; try `3 × Sigma Stone`
+against `Mid` and watch what pure consistency does to a fight.
+
+**How to play:** tap a die to select it, then drag it onto a skill (or just tap
+the skill). Legal slots glow **teal**. Slots where a Sigma is still reachable
+glow **gold** — that is the whole game in one affordance. Spend Slip on the
+verbs to bend a die's face before you commit. Nothing is locked in until you
+hit RESOLVE.
 
 ## Documents
 

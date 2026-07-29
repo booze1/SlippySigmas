@@ -9,7 +9,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "sim": "tsx src/sim/probe.ts"
+    "sim": "tsx src/sim/probe.ts",
+    "inline": "node scripts/inline.mjs",
+    "artifact": "npm run build && npm run inline"
   },
   "devDependencies": {
     "playwright": "^1.49.1",
