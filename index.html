@@ -7,29 +7,35 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%8E%B2%3C/text%3E%3C/svg%3E" />
-    <title>Slippy Sigmas — Act 1</title>
+    <title>Slippy Sigmas</title>
     <link rel="stylesheet" href="/src/ui/style.css" />
   </head>
   <body>
     <div id="app">
       <main class="phone">
-        <header id="statusbar"></header>
-        <section id="enemyfield"></section>
-        <section id="slots"></section>
-        <section id="tray-wrap">
-          <div id="tray"></div>
-          <div id="inspector"></div>
-        </section>
-        <section id="slipbar"></section>
-        <button id="resolve">R E S O L V E</button>
-        <details id="logwrap">
-          <summary>combat log</summary>
-          <div id="logpane"></div>
-        </details>
+        <header id="runbar"></header>
+
+        <div id="combat-screen" hidden>
+          <section id="statusbar"></section>
+          <section id="enemyfield"></section>
+          <section id="slots"></section>
+          <section id="tray-wrap">
+            <div id="tray"></div>
+            <div id="inspector"></div>
+          </section>
+          <section id="slipbar"></section>
+          <button id="resolve">R E S O L V E</button>
+          <details id="logwrap">
+            <summary>combat log</summary>
+            <div id="logpane"></div>
+          </details>
+        </div>
+
+        <div id="other-screen"></div>
       </main>
 
       <details class="debug" id="debugwrap">
-        <summary>Feel-test controls — swap bag, loadout &amp; enemy</summary>
+        <summary>Run details — bag, loadout &amp; relics</summary>
         <div id="debug"></div>
       </details>
     </div>

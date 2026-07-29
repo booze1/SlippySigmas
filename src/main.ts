@@ -1,22 +1,30 @@
-// Slippy Sigmas — Phase 2 "combat depth".
+// Slippy Sigmas — Phase 3 "the run".
 //
-// Full Act 1: 34 skills, 22 dice, 10 statuses, multi-enemy encounters with
-// targeting, and a three-phase boss. Controller + renderer; the engine
-// underneath is pure and UI-agnostic.
+// Three acts, 18 nodes, a branching map, rewards, shops, rests and events.
+// Controller + renderer; the engine underneath is pure and UI-agnostic. A fight
+// is a GameState the run owns for a while — everything persistent lives in
+// RunState.
 
 import type { GameState, Die, Enemy } from './engine/types.js';
+import {
+  newRun, enterNode, finishCombat, nextOptions, takeSkill, takeDie, takeRelic,
+  skipReward, rewardDone, leaveNode, buy, restHeal, restForge, restUpgrade,
+  chooseEvent, effectiveBagCap, relicDef, skillName, type RunState, type ForgeKind,
+} from './engine/run.js';
+import { NODE_ICON, NODE_LABEL } from './engine/map.js';
+import { DICE_DEFS as DDEFS, entryFaces } from './engine/dice.js';
 import { Rng } from './engine/rng.js';
 import {
-  newGame, resolveTurn, slotDie, unslotDie, autoSlot, clearSlots, setSlotSkill,
+  resolveTurn, slotDie, unslotDie, autoSlot, setSlotSkill,
   setTarget, nudge, reroll, freeze, cloneFace, setFace, split, canAfford,
-  DEFAULT_BAG, DEFAULT_LOADOUT, BAG_CAP, type ResolveEvent,
+  type ResolveEvent,
 } from './engine/combat.js';
 import {
   SKILLS, SKILL_LIST, previewSlot, canSlot, costLabel, diceInSlot,
   livingEnemies, currentTarget, slotReady,
 } from './engine/skills.js';
-import { DICE_DEFS, DICE_LIST, facesOf, crownOf, isWild, faceLabel, traitOf } from './engine/dice.js';
-import { ENCOUNTER_LIST, intentLabel, intentIcon } from './engine/enemy.js';
+import { DICE_DEFS, facesOf, crownOf, isWild, faceLabel, traitOf } from './engine/dice.js';
+import { intentLabel, intentIcon } from './engine/enemy.js';
 import { nudgeCost, FLAT_COSTS, VERB_BLURB, type SlipVerb } from './engine/slip.js';
 import { tierLabel, TIER_RANK } from './engine/sigma.js';
 import { enemyStatusTags, playerStatusTags } from './engine/status.js';
@@ -24,6 +32,9 @@ import { enemyStatusTags, playerStatusTags } from './engine/status.js';
 // ------------------------------------------------------------------ state
 
 let rng: Rng;
+let run: RunState;
+
+/** Combat state lives inside the run; this is a convenience alias. */
 let state: GameState;
 
 const ui = {
@@ -32,33 +43,37 @@ const ui = {
   hoverSlot: null as number | null,
   dragging: null as string | null,
   justRolled: false,
-  config: {
-    bag: [...DEFAULT_BAG],
-    loadout: [...DEFAULT_LOADOUT] as (string | null)[],
-    encounterKey: 'a1_wraith',
-    seed: '',
-  },
+  /** Reward flow: a skill is chosen, then a slot to put it in. */
+  pendingSkill: null as string | null,
+  /** Rest flow. */
+  restMode: null as 'forge' | 'upgrade' | null,
+  forgeDie: null as number | null,
+  /** Shop flow: buying a skill needs a slot, removal needs a die. */
+  shopPending: null as number | null,
 };
 
-function start(): void {
-  const seedNum = ui.config.seed.trim() ? Number(ui.config.seed.trim()) : undefined;
-  const g = newGame({
-    seed: Number.isFinite(seedNum) ? seedNum : undefined,
-    bag: ui.config.bag,
-    loadout: ui.config.loadout,
-    encounterKey: ui.config.encounterKey,
-  });
-  state = g.state;
+function startRun(seed?: number): void {
+  const g = newRun(seed);
+  run = g.run;
   rng = g.rng;
-  ui.selected = null;
-  ui.armed = null;
-  ui.justRolled = true;
+  syncCombat();
+  render();
+}
+
+function syncCombat(): void {
+  state = run.combat ?? state;
+}
+
+function setRun(next: RunState): void {
+  run = next;
+  syncCombat();
   render();
 }
 
 function setState(next: GameState): void {
   if (next === state) return;
   state = next;
+  run.combat = next;
   render();
 }
 
@@ -101,16 +116,295 @@ function sigmaPotential(die: Die, slotIndex: number): boolean {
 // ----------------------------------------------------------------- render
 
 function render(): void {
-  renderStatus();
-  renderEnemies();
-  renderSlots();
-  renderTray();
-  renderInspector();
-  renderSlip();
-  renderResolve();
-  renderLog();
+  const inCombat = run.screen === 'combat' && !!run.combat;
+  ($('combat-screen') as HTMLElement).hidden = !inCombat;
+  const other = $('other-screen');
+
+  renderRunBar();
+
+  if (inCombat) {
+    other.innerHTML = '';
+    renderStatus();
+    renderEnemies();
+    renderSlots();
+    renderTray();
+    renderInspector();
+    renderSlip();
+    renderResolve();
+    renderLog();
+  } else {
+    other.innerHTML = renderScreen();
+  }
   renderDebug();
   ui.justRolled = false;
+}
+
+function renderRunBar(): void {
+  const pct = Math.max(0, (run.hp / run.maxHp) * 100);
+  $('runbar').innerHTML = `
+    <div class="runrow">
+      <span class="pill act">ACT ${run.act}</span>
+      <div class="hpbar">
+        <i style="width:${pct}%"></i>
+        <span>${Math.max(0, run.hp)} / ${run.maxHp}</span>
+      </div>
+      <span class="pill goldp">${run.gold}g</span>
+    </div>`;
+}
+
+function renderScreen(): string {
+  switch (run.screen) {
+    case 'map': return renderMap();
+    case 'reward': return renderReward();
+    case 'shop': return renderShop();
+    case 'rest': return renderRest();
+    case 'event': return renderEvent();
+    case 'treasure': return renderTreasure();
+    case 'dead': return renderEnd(false);
+    case 'won': return renderEnd(true);
+    default: return '';
+  }
+}
+
+// ------------------------------------------------------------------ screens
+
+function renderMap(): string {
+  // Absolute positioning with an SVG underlay, because the routes ARE the
+  // information here. Node types alone do not tell you which paths exist, and
+  // docs/06 promises the whole map is legible before you commit.
+  const NODE = 46, PITCH_X = 58, PITCH_Y = 62, PAD = 8;
+  const rows = run.map.rows;
+  const width = PITCH_X * 3;
+  const height = PITCH_Y * rows.length;
+
+  // Row 0 is the start, drawn at the BOTTOM so the boss sits at the top.
+  const xy = (r: number, c: number): [number, number] => {
+    const w = rows[r].length;
+    const x = width / 2 + (c - (w - 1) / 2) * PITCH_X - NODE / 2;
+    const y = height - (r + 1) * PITCH_Y + PAD;
+    return [x, y];
+  };
+
+  const edges: string[] = [];
+  for (let r = 0; r < rows.length - 1; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      const [x1, y1] = xy(r, c);
+      for (const n of rows[r][c].next) {
+        const [x2, y2] = xy(r + 1, n);
+        const live = r === run.row && c === run.col;
+        edges.push(
+          `<line x1="${x1 + NODE / 2}" y1="${y1}" x2="${x2 + NODE / 2}" y2="${y2 + NODE}"
+                 class="edge ${live ? 'live' : ''}" />`,
+        );
+      }
+    }
+  }
+
+  const options = nextOptions(run);
+  const nodes: string[] = [];
+  rows.forEach((row, r) => {
+    row.forEach((node, c) => {
+      const [x, y] = xy(r, c);
+      const here = r === run.row && c === run.col;
+      const done = r < run.row;
+      const open = r === run.row + 1 && options.includes(c);
+      const cls = ['mapnode', here ? 'here' : '', done ? 'done' : '', open ? 'open' : ''].filter(Boolean).join(' ');
+      nodes.push(
+        `<button class="${cls}" style="left:${x}px;top:${y}px" ${open ? `data-node="${c}"` : 'disabled'}
+                 title="${NODE_LABEL[node.kind]}"><span class="mi">${NODE_ICON[node.kind]}</span></button>`,
+      );
+    });
+  });
+
+  return `
+    <div class="screen">
+      <h2>Act ${run.act} — choose your route</h2>
+      <p class="lead">The whole map is visible before you commit. ${run.nodesCleared} nodes cleared.</p>
+      <div class="mapgrid" style="height:${height + PAD * 2}px">
+        <div class="mapinner" style="width:${width}px;height:${height + PAD * 2}px">
+          <svg class="edges" viewBox="0 0 ${width} ${height + PAD * 2}" width="${width}" height="${height + PAD * 2}">${edges.join('')}</svg>
+          ${nodes.join('')}
+        </div>
+      </div>
+      <div class="legend">
+        ${(['battle','hard','elite','event','shop','rest','treasure','boss'] as const)
+          .map((k) => `<span><b>${NODE_ICON[k]}</b> ${NODE_LABEL[k]}</span>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderReward(): string {
+  const parts: string[] = [`<h2>Victory</h2>`];
+  if (run.offerGold) parts.push(`<p class="lead">+${run.offerGold} gold.</p>`);
+
+  if (run.offerRelic) {
+    const d = relicDef(run.offerRelic)!;
+    parts.push(`<div class="card"><div class="cardhead">${esc(d.name)} <span class="rar ${d.rarity}">${d.rarity}</span></div>
+      <div class="carddesc">${esc(d.text)}</div>
+      <button class="wide" id="takerelic">Take relic</button></div>`);
+  }
+
+  if (run.offerDice.length) {
+    parts.push('<h3>Pick a die</h3><div class="offers">');
+    for (const key of run.offerDice) {
+      const d = DDEFS[key];
+      parts.push(`<button class="card pick" data-takedie="${key}">
+        <div class="cardhead">${esc(d.name)} <span class="rar ${d.rarity}">${d.rarity}</span></div>
+        <div class="faces">${d.faces.map((f) => `<i>${f === -1 ? 'W' : f}</i>`).join('')}</div>
+        <div class="carddesc">${esc(d.note ?? '')}</div></button>`);
+    }
+    parts.push('</div>');
+    if (run.bag.length >= effectiveBagCap(run)) {
+      parts.push('<p class="warn">Bag is full — taking a die is not possible. Skip, or remove one at a shop.</p>');
+      parts.push('<button class="wide" id="skipdice">Skip the die</button>');
+    }
+  }
+
+  if (run.offerSkills.length) {
+    if (ui.pendingSkill) {
+      parts.push(`<h3>Replace which slot?</h3><div class="offers">`);
+      run.loadout.forEach((k, i) => {
+        parts.push(`<button class="card pick" data-slotpick="${i}">
+          <div class="cardhead">Slot ${i + 1}</div>
+          <div class="carddesc">${esc(skillName(k))}</div></button>`);
+      });
+      parts.push('</div><button class="wide ghost" id="cancelskill">Back</button>');
+    } else {
+      parts.push('<h3>Pick a skill</h3><div class="offers">');
+      for (const key of run.offerSkills) {
+        const sk = SKILLS[key];
+        parts.push(`<button class="card pick" data-takeskill="${key}">
+          <div class="cardhead">${esc(sk.name)} <span class="rar ${sk.rarity}">${sk.rarity}</span></div>
+          <div class="cost">${costLabel(sk.cost)} · ${sk.lane}</div>
+          <div class="carddesc">${esc(sk.blurb)}</div></button>`);
+      }
+      parts.push('</div><button class="wide ghost" id="skipskill">Skip for 15 gold</button>');
+    }
+  }
+
+  if (rewardDone(run)) parts.push('<button class="wide" id="continue">Continue</button>');
+  return `<div class="screen">${parts.join('')}</div>`;
+}
+
+function renderShop(): string {
+  const rows = run.shop.map((item, i) => {
+    if (item.sold) return `<div class="card sold">sold</div>`;
+    const afford = run.gold >= item.price;
+    let head = '', desc = '';
+    if (item.kind === 'die') { const d = DDEFS[item.key]; head = d.name; desc = `[${d.faces.map((f) => (f === -1 ? 'W' : f)).join(',')}] ${d.note ?? ''}`; }
+    else if (item.kind === 'skill') { const sk = SKILLS[item.key]; head = sk.name; desc = `${costLabel(sk.cost)} — ${sk.blurb}`; }
+    else if (item.kind === 'relic') { const r = relicDef(item.key)!; head = r.name; desc = r.text; }
+    else { head = 'Remove a die'; desc = 'Price rises each time it is used.'; }
+    return `<button class="card pick ${afford ? '' : 'poor'}" data-buy="${i}" ${afford ? '' : 'disabled'}>
+      <div class="cardhead">${esc(head)} <span class="price">${item.price}g</span></div>
+      <div class="carddesc">${esc(desc)}</div></button>`;
+  }).join('');
+
+  let picker = '';
+  if (ui.shopPending !== null) {
+    const item = run.shop[ui.shopPending];
+    if (item?.kind === 'skill') {
+      picker = `<h3>Into which slot?</h3><div class="offers">${run.loadout
+        .map((k, i) => `<button class="card pick" data-buyslot="${i}"><div class="cardhead">Slot ${i + 1}</div><div class="carddesc">${esc(skillName(k))}</div></button>`)
+        .join('')}</div><button class="wide ghost" id="cancelbuy">Back</button>`;
+    } else if (item?.kind === 'removal') {
+      picker = `<h3>Remove which die?</h3><div class="offers">${run.bag
+        .map((e, i) => `<button class="card pick" data-buyslot="${i}"><div class="cardhead">${esc(DDEFS[e.key].name)}</div><div class="faces">${entryFaces(e).map((f) => `<i>${f === -1 ? 'W' : f}</i>`).join('')}</div></button>`)
+        .join('')}</div><button class="wide ghost" id="cancelbuy">Back</button>`;
+    }
+  }
+
+  return `<div class="screen">
+    <h2>Shop</h2>
+    <p class="lead">${run.gold} gold. Removal is usually worth more than another die.</p>
+    ${picker || `<div class="offers">${rows}</div><button class="wide" id="continue">Leave</button>`}
+  </div>`;
+}
+
+function renderRest(): string {
+  if (ui.restMode === 'forge') {
+    if (ui.forgeDie === null) {
+      return `<div class="screen"><h2>Forge which die?</h2><div class="offers">${run.bag
+        .map((e, i) => `<button class="card pick" data-forgedie="${i}"><div class="cardhead">${esc(DDEFS[e.key].name)}</div><div class="faces">${entryFaces(e).map((f) => `<i>${f === -1 ? 'W' : f}</i>`).join('')}</div></button>`)
+        .join('')}</div><button class="wide ghost" id="cancelrest">Back</button></div>`;
+    }
+    const e = run.bag[ui.forgeDie];
+    return `<div class="screen"><h2>Forge ${esc(DDEFS[e.key].name)}</h2>
+      <div class="faces big">${entryFaces(e).map((f) => `<i>${f === -1 ? 'W' : f}</i>`).join('')}</div>
+      <div class="offers">
+        <button class="card pick" data-forge="sharpen"><div class="cardhead">Sharpen</div><div class="carddesc">+1 to every face. Raises the ceiling, keeps the matching structure.</div></button>
+        <button class="card pick" data-forge="bevel"><div class="cardhead">Bevel</div><div class="carddesc">Overwrite the lowest face with your most common one. The consistency forge.</div></button>
+        <button class="card pick" data-forge="flatten"><div class="cardhead">Flatten</div><div class="carddesc">Raise the lowest face to the second-lowest. Better matching, less Slip income.</div></button>
+      </div>
+      <button class="wide ghost" id="cancelrest">Back</button></div>`;
+  }
+
+  if (ui.restMode === 'upgrade') {
+    return `<div class="screen"><h2>Upgrade which skill?</h2><div class="offers">${run.loadout
+      .filter(Boolean)
+      .map((k) => {
+        const sk = SKILLS[k as string];
+        const done = run.upgrades.includes(k as string);
+        return `<button class="card pick" data-upgrade="${k}" ${done ? 'disabled' : ''}>
+          <div class="cardhead">${esc(sk.name)}${done ? ' ✓' : ''}</div>
+          <div class="carddesc">${esc(sk.blurb)}</div></button>`;
+      }).join('')}</div><button class="wide ghost" id="cancelrest">Back</button></div>`;
+  }
+
+  return `<div class="screen">
+    <h2>Rest</h2>
+    <p class="lead">You can only do one. Survival now, consistency forever, or damage forever.</p>
+    <div class="offers">
+      <button class="card pick" id="resthaeal" data-rest="heal"><div class="cardhead">Heal ${Math.floor(run.maxHp * 0.3)}</div><div class="carddesc">Back to ${Math.min(run.maxHp, run.hp + Math.floor(run.maxHp * 0.3))} / ${run.maxHp}.</div></button>
+      <button class="card pick" data-rest="forge"><div class="cardhead">Forge a die</div><div class="carddesc">Permanently reshape one die's faces.</div></button>
+      <button class="card pick" data-rest="upgrade"><div class="cardhead">Upgrade a skill</div><div class="carddesc">+25% on its scaling effects, for the rest of the run.</div></button>
+    </div>
+  </div>`;
+}
+
+function renderEvent(): string {
+  const ev = run.event;
+  if (!ev) return '';
+  if (run.eventResult) {
+    return `<div class="screen"><h2>${esc(ev.name)}</h2>
+      <p class="lead">${esc(run.eventResult)}</p>
+      <button class="wide" id="continue">Continue</button></div>`;
+  }
+  return `<div class="screen">
+    <h2>${esc(ev.name)}</h2>
+    <p class="lead">${esc(ev.text)}</p>
+    <div class="offers">${ev.choices.map((c, i) => {
+      const poor = !!c.cost?.gold && run.gold < c.cost.gold;
+      return `<button class="card pick ${poor ? 'poor' : ''}" data-event="${i}" ${poor ? 'disabled' : ''}>
+        <div class="cardhead">${esc(c.label)}</div>
+        ${c.detail ? `<div class="carddesc">${esc(c.detail)}</div>` : ''}</button>`;
+    }).join('')}</div>
+  </div>`;
+}
+
+function renderTreasure(): string {
+  if (!run.offerRelic) return `<div class="screen"><h2>Empty</h2><button class="wide" id="continue">Continue</button></div>`;
+  const d = relicDef(run.offerRelic)!;
+  return `<div class="screen"><h2>Treasure</h2>
+    <div class="card"><div class="cardhead">${esc(d.name)} <span class="rar ${d.rarity}">${d.rarity}</span></div>
+    <div class="carddesc">${esc(d.text)}</div></div>
+    <button class="wide" id="takerelic">Take it</button></div>`;
+}
+
+function renderEnd(won: boolean): string {
+  return `<div class="screen end ${won ? 'won' : 'dead'}">
+    <h2>${won ? 'RUN COMPLETE' : 'DEFEAT'}</h2>
+    <div class="statgrid big">
+      <span>act reached</span><b>${run.act}</b>
+      <span>nodes cleared</span><b>${run.nodesCleared}</b>
+      <span>total damage</span><b>${run.totalDamage}</b>
+      <span>biggest hit</span><b class="goldc">${run.biggestHit}</b>
+      <span>final bag</span><b>${run.bag.length} dice</b>
+      <span>relics</span><b>${run.relics.length}</b>
+      <span>seed</span><b>${run.seed}</b>
+    </div>
+    <button class="wide" id="newrunbtn">New run</button>
+  </div>`;
 }
 
 function renderStatus(): void {
@@ -305,64 +599,44 @@ function renderLog(): void {
 // ------------------------------------------------------------------ debug
 
 function renderDebug(): void {
-  const s = state.stats;
-  const bagRows = ui.config.bag.map((k, i) =>
-    `<div class="row">
-       <select data-bagslot="${i}">${DICE_LIST.map((d) =>
-         `<option value="${d.key}" ${d.key === k ? 'selected' : ''}>${esc(d.name)} [${d.faces.map((f) => (f === -1 ? 'W' : f)).join(',')}]</option>`).join('')}</select>
-       <button data-rmbag="${i}">✕</button>
-     </div>`).join('');
+  const bag = run.bag.map((e) => {
+    const d = DDEFS[e.key];
+    const forged = !!e.faces;
+    return `<div class="bagrow"><span>${esc(d.name)}${forged ? ' ⚒' : ''}</span>
+      <span class="faces">${entryFaces(e).map((f) => `<i>${f === -1 ? 'W' : f}</i>`).join('')}</span></div>`;
+  }).join('');
 
   const lanes = ['manipulation', 'damage', 'combo', 'defense'] as const;
-  const loadRows = ui.config.loadout.map((k, i) =>
+  const loadRows = run.loadout.map((k, i) =>
     `<div class="row"><label>slot ${i + 1}</label>
        <select data-loadslot="${i}">
          <option value="">— empty —</option>
          ${lanes.map((lane) => `<optgroup label="${lane}">${SKILL_LIST.filter((sk) => sk.lane === lane).map((sk) =>
-           `<option value="${sk.key}" ${sk.key === k ? 'selected' : ''}>${esc(sk.name)} (${costLabel(sk.cost)})</option>`).join('')}</optgroup>`).join('')}
+           `<option value="${sk.key}" ${sk.key === k ? 'selected' : ''}>${esc(sk.name)} (${costLabel(sk.cost)})${run.upgrades.includes(sk.key) ? ' +' : ''}</option>`).join('')}</optgroup>`).join('')}
        </select>
      </div>`).join('');
 
-  const sig = s.sigmaCounts;
-  const fired = sig.NONE + sig.SIGMA + sig.DOUBLE + sig.OMEGA;
-  const rate = fired ? Math.round(((sig.SIGMA + sig.DOUBLE + sig.OMEGA) / fired) * 100) : 0;
+  const relics = run.relics.length
+    ? run.relics.map((k) => { const d = relicDef(k)!; return `<div class="bagrow"><span>${esc(d.name)}</span><span class="dim">${esc(d.text)}</span></div>`; }).join('')
+    : '<div class="dim">none yet</div>';
 
   $('debug').innerHTML = `
-    <h3>Encounter</h3>
-    <div class="row">
-      <select id="encsel">${ENCOUNTER_LIST.map((e) =>
-        `<option value="${e.key}" ${e.key === ui.config.encounterKey ? 'selected' : ''}>${esc(e.name)} · ${e.kind}</option>`).join('')}</select>
-    </div>
-
-    <h3>Bag (${ui.config.bag.length}/${BAG_CAP})</h3>
-    ${bagRows}
-    <div class="row">
-      <select id="addbag">${DICE_LIST.map((d) => `<option value="${d.key}">+ ${esc(d.name)}</option>`).join('')}</select>
-      <button id="addbagbtn">add</button>
-    </div>
-
+    <h3>Bag (${run.bag.length}/${effectiveBagCap(run)})</h3>
+    ${bag}
     <h3>Loadout</h3>
     ${loadRows}
-
+    <h3>Relics</h3>
+    ${relics}
     <h3>Run</h3>
-    <div class="row"><label>seed</label><input id="seed" value="${esc(ui.config.seed)}" placeholder="random" /></div>
-    <div class="row"><button id="newrun">↻ restart encounter</button></div>
-    <div class="row"><button id="clearslots">clear slotted dice</button></div>
-
-    <h3>This fight</h3>
     <div class="statgrid">
-      <span>turns</span><b>${s.turns}</b>
-      <span>damage dealt</span><b>${s.damageDealt}</b>
-      <span>damage taken</span><b>${s.damageTaken}</b>
-      <span>biggest hit</span><b class="goldc">${s.biggestHit}</b>
-      <span>slip spent</span><b>${s.slipSpent}</b>
-      <span>skills fired</span><b>${fired}</b>
-      <span>sigma rate</span><b>${rate}%</b>
-      <span>· sigma</span><b>${sig.SIGMA}</b>
-      <span>· double</span><b>${sig.DOUBLE}</b>
-      <span>· omega</span><b>${sig.OMEGA}</b>
-      <span>seed</span><b>${state.seed}</b>
-    </div>`;
+      <span>act</span><b>${run.act}</b>
+      <span>nodes cleared</span><b>${run.nodesCleared}</b>
+      <span>gold</span><b>${run.gold}</b>
+      <span>total damage</span><b>${run.totalDamage}</b>
+      <span>biggest hit</span><b class="goldc">${run.biggestHit}</b>
+      <span>seed</span><b>${run.seed}</b>
+    </div>
+    <div class="row"><button id="newrunbtn">↻ abandon &amp; restart</button></div>`;
 }
 
 // ------------------------------------------------------------------- juice
@@ -393,14 +667,21 @@ function celebrate(events: ResolveEvent[]): void {
 // ------------------------------------------------------------------ input
 
 function doResolve(): void {
-  if (state.phase !== 'PLAN') { start(); return; }
+  if (!run.combat) return;
+  if (state.phase !== 'PLAN') { setRun(finishCombat(run, rng)); return; }
   const { state: next, events } = resolveTurn(state, rng);
   state = next;
+  run.combat = next;
   ui.selected = null;
   ui.armed = null;
   ui.justRolled = true;
   render();
   celebrate(events);
+  // A finished fight returns control to the run rather than sitting on a
+  // victory button — the reward screen IS the button.
+  if (next.phase !== 'PLAN') {
+    setTimeout(() => setRun(finishCombat(run, rng)), next.phase === 'WIN' ? 850 : 500);
+  }
 }
 
 function onVerb(verb: SlipVerb, dieId: string): void {
@@ -418,6 +699,7 @@ function bindOnce(): void {
   let downX = 0, downY = 0, moved = false;
 
   document.addEventListener('pointerdown', (ev) => {
+    if (run.screen !== 'combat') return;
     const el = (ev.target as HTMLElement).closest('.die') as HTMLElement | null;
     if (!el) return;
     const die = state.dice.find((d) => d.id === el.dataset.id);
@@ -482,6 +764,77 @@ function bindOnce(): void {
   document.addEventListener('click', (ev) => {
     const t = ev.target as HTMLElement;
 
+    // ---------------------------------------------------------- run screens
+    const node = t.closest('[data-node]') as HTMLElement | null;
+    if (node) { setRun(enterNode(run, Number(node.dataset.node), rng)); return; }
+
+    if (t.closest('#takerelic')) { setRun(takeRelic(run)); return; }
+
+    const takeDieEl = t.closest('[data-takedie]') as HTMLElement | null;
+    if (takeDieEl) { setRun(takeDie(run, takeDieEl.dataset.takedie!)); return; }
+    if (t.closest('#skipdice')) { const r = structuredClone(run); r.offerDice = []; setRun(r); return; }
+
+    const takeSkillEl = t.closest('[data-takeskill]') as HTMLElement | null;
+    if (takeSkillEl) { ui.pendingSkill = takeSkillEl.dataset.takeskill!; render(); return; }
+    const slotPick = t.closest('[data-slotpick]') as HTMLElement | null;
+    if (slotPick && ui.pendingSkill) {
+      const next = takeSkill(run, ui.pendingSkill, Number(slotPick.dataset.slotpick));
+      ui.pendingSkill = null;
+      setRun(next);
+      return;
+    }
+    if (t.closest('#cancelskill')) { ui.pendingSkill = null; render(); return; }
+    if (t.closest('#skipskill')) { setRun(skipReward(run)); return; }
+    if (t.closest('#continue')) { setRun(leaveNode(run)); return; }
+    if (t.closest('#newrunbtn')) { startRun(); return; }
+
+    const buyEl = t.closest('[data-buy]') as HTMLElement | null;
+    if (buyEl) {
+      const i = Number(buyEl.dataset.buy);
+      const item = run.shop[i];
+      if (item.kind === 'skill' || item.kind === 'removal') { ui.shopPending = i; render(); }
+      else setRun(buy(run, i));
+      return;
+    }
+    const buySlot = t.closest('[data-buyslot]') as HTMLElement | null;
+    if (buySlot && ui.shopPending !== null) {
+      const next = buy(run, ui.shopPending, Number(buySlot.dataset.buyslot));
+      ui.shopPending = null;
+      setRun(next);
+      return;
+    }
+    if (t.closest('#cancelbuy')) { ui.shopPending = null; render(); return; }
+
+    const restEl = t.closest('[data-rest]') as HTMLElement | null;
+    if (restEl) {
+      const mode = restEl.dataset.rest;
+      if (mode === 'heal') setRun(restHeal(run));
+      else { ui.restMode = mode as 'forge' | 'upgrade'; ui.forgeDie = null; render(); }
+      return;
+    }
+    const forgeDieEl = t.closest('[data-forgedie]') as HTMLElement | null;
+    if (forgeDieEl) { ui.forgeDie = Number(forgeDieEl.dataset.forgedie); render(); return; }
+    const forgeEl = t.closest('[data-forge]') as HTMLElement | null;
+    if (forgeEl && ui.forgeDie !== null) {
+      const next = restForge(run, ui.forgeDie, forgeEl.dataset.forge as ForgeKind);
+      ui.restMode = null; ui.forgeDie = null;
+      setRun(next);
+      return;
+    }
+    const upEl = t.closest('[data-upgrade]') as HTMLElement | null;
+    if (upEl) { ui.restMode = null; setRun(restUpgrade(run, upEl.dataset.upgrade!)); return; }
+    if (t.closest('#cancelrest')) {
+      if (ui.forgeDie !== null) ui.forgeDie = null; else ui.restMode = null;
+      render();
+      return;
+    }
+
+    const evEl = t.closest('[data-event]') as HTMLElement | null;
+    if (evEl) { setRun(chooseEvent(run, Number(evEl.dataset.event), rng)); return; }
+
+    // ---------------------------------------------------------------- combat
+    if (run.screen !== 'combat') return;
+
     const enemyEl = t.closest('[data-enemy]') as HTMLElement | null;
     if (enemyEl) { setState(setTarget(state, enemyEl.dataset.enemy!)); return; }
 
@@ -514,39 +867,22 @@ function bindOnce(): void {
     }
 
     if (t.id === 'resolve') { doResolve(); return; }
-    if (t.id === 'newrun') { start(); return; }
-    if (t.id === 'clearslots') { setState(clearSlots(state)); return; }
-    if (t.id === 'addbagbtn') {
-      if (ui.config.bag.length < BAG_CAP) ui.config.bag.push(($('addbag') as HTMLSelectElement).value);
-      start();
-      return;
-    }
-    const rm = t.closest('[data-rmbag]') as HTMLElement | null;
-    if (rm) {
-      if (ui.config.bag.length > 1) ui.config.bag.splice(Number(rm.dataset.rmbag), 1);
-      start();
-      return;
-    }
   });
 
   document.addEventListener('change', (ev) => {
     const t = ev.target as HTMLElement;
-    const bagSel = t.closest('[data-bagslot]') as HTMLSelectElement | null;
-    if (bagSel) { ui.config.bag[Number(bagSel.dataset.bagslot)] = bagSel.value; start(); return; }
-
     const loadSel = t.closest('[data-loadslot]') as HTMLSelectElement | null;
     if (loadSel) {
       const i = Number(loadSel.dataset.loadslot);
-      ui.config.loadout[i] = loadSel.value || null;
-      setState(setSlotSkill(state, i, loadSel.value || null));
-      return;
+      run.loadout[i] = loadSel.value || null;
+      if (run.combat) setState(setSlotSkill(state, i, loadSel.value || null));
+      else render();
     }
-    if (t.id === 'encsel') { ui.config.encounterKey = (t as HTMLSelectElement).value; start(); return; }
-    if (t.id === 'seed') { ui.config.seed = (t as HTMLInputElement).value; return; }
   });
 
   document.addEventListener('keydown', (ev) => {
     if ((ev.target as HTMLElement).tagName === 'INPUT') return;
+    if (run.screen !== 'combat') return;
     if (ev.key === 'Enter') { doResolve(); return; }
     if (ev.key === 'Escape') { ui.selected = null; ui.armed = null; render(); return; }
     const n = Number(ev.key);
@@ -568,4 +904,4 @@ function openPanelsOnWideScreens(): void {
 
 openPanelsOnWideScreens();
 bindOnce();
-start();
+startRun();

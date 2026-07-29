@@ -288,3 +288,143 @@ report('3d+4d, 6 dice vs Mid', simulate(300, d6x6, bigKit, 'a1_elite_mid'));
 report('3d+4d, 8 dice vs Mid', simulate(300, [...d6x6, 'standard_d6', 'standard_d6'], bigKit, 'a1_elite_mid'));
 
 console.log('');
+
+// ------------------------------------------------- 3. full-run simulation
+//
+// The Phase 3 exit criterion is "a complete 18-node run is playable start to
+// finish". A dumb clicker cannot answer that; the greedy AI can.
+
+import {
+  newRun, enterNode, finishCombat, nextOptions, takeSkill, takeDie, takeRelic,
+  skipReward, leaveNode, restHeal, chooseEvent, buy, type RunState,
+} from '../engine/run.js';
+
+/** Route heuristic: rest when hurt, take elites when healthy, else press on. */
+function chooseNode(run: RunState): number {
+  const options = nextOptions(run);
+  const row = run.map.rows[run.row + 1];
+  if (!row) return options[0];
+  const hurt = run.hp / run.maxHp < 0.55;
+  const healthy = run.hp / run.maxHp > 0.75;
+
+  const score = (col: number): number => {
+    const k = row[col]?.kind;
+    if (!k) return -99;
+    if (k === 'rest') return hurt ? 100 : 30;
+    if (k === 'treasure') return 60;
+    if (k === 'shop') return 45;
+    if (k === 'elite') return healthy ? 55 : -20;
+    if (k === 'event') return 35;
+    if (k === 'hard') return healthy ? 25 : 5;
+    return 20;
+  };
+  return options.reduce((best, c) => (score(c) > score(best) ? c : best), options[0]);
+}
+
+interface RunResult {
+  runs: number; wins: number; actReached: number[]; nodes: number;
+  deaths: Record<string, number>; finalBag: number; relics: number; biggest: number;
+}
+
+function simulateRuns(count: number): RunResult {
+  const res: RunResult = {
+    runs: count, wins: 0, actReached: [0, 0, 0, 0], nodes: 0,
+    deaths: {}, finalBag: 0, relics: 0, biggest: 0,
+  };
+
+  for (let i = 0; i < count; i++) {
+    const { run: r0, rng } = newRun(5000 + i);
+    let run = r0;
+    let guard = 0;
+
+    while (guard++ < 400) {
+      if (run.screen === 'dead' || run.screen === 'won') break;
+
+      if (run.screen === 'map') {
+        run = enterNode(run, chooseNode(run), rng);
+      } else if (run.screen === 'combat' && run.combat) {
+        let c = run.combat;
+        let turns = 0;
+        while (c.phase === 'PLAN' && turns++ < 60) {
+          c = spendSlip(c);
+          c = fillSlots(c);
+          c = resolveTurn(c, rng).state;
+        }
+        run.combat = c;
+        run = finishCombat(run, rng);
+        if (run.screen === 'dead') {
+          const key = c.enemies.find((e) => e.hp > 0)?.name ?? 'unknown';
+          res.deaths[key] = (res.deaths[key] ?? 0) + 1;
+        }
+      } else if (run.screen === 'reward') {
+        if (run.offerRelic) run = takeRelic(run);
+        else if (run.offerDice.length) {
+          run = takeDie(run, run.offerDice[0]);
+          if (run.offerDice.length) run = { ...run, offerDice: [] };
+        } else if (run.offerSkills.length) {
+          // Replace an empty slot if there is one, otherwise the lowest-rarity
+          // skill held. Randomly clobbering slots was destroying good builds and
+          // making the AI, not the balance, the limiting factor.
+          const rank: Record<string, number> = { common: 0, uncommon: 1, rare: 2, legendary: 3 };
+          const best = run.offerSkills
+            .map((k) => ({ k, r: rank[SKILLS[k].rarity] }))
+            .sort((a, b) => b.r - a.r)[0];
+          let slot = run.loadout.findIndex((x) => !x);
+          if (slot < 0) {
+            let worst = 0;
+            for (let j = 1; j < run.loadout.length; j++) {
+              const cur = run.loadout[j];
+              const wr = run.loadout[worst];
+              if (cur && wr && rank[SKILLS[cur].rarity] < rank[SKILLS[wr].rarity]) worst = j;
+            }
+            slot = worst;
+          }
+          const held = run.loadout[slot];
+          run = !held || rank[SKILLS[held].rarity] <= best.r
+            ? takeSkill(run, best.k, slot)
+            : skipReward(run);
+        } else run = leaveNode(run);
+      } else if (run.screen === 'shop') {
+        // Buy what is affordable, cheapest first — relics and dice only, since
+        // slot-targeted purchases need judgement this heuristic does not have.
+        for (let pass = 0; pass < 6; pass++) {
+          const idx = run.shop
+            .map((it, j) => ({ it, j }))
+            .filter(({ it }) => !it.sold && (it.kind === 'relic' || it.kind === 'die') && run.gold >= it.price)
+            .sort((a, b) => a.it.price - b.it.price)[0];
+          if (!idx) break;
+          const before = run.gold;
+          run = buy(run, idx.j);
+          if (run.gold === before) break;
+        }
+        run = leaveNode(run);
+      } else if (run.screen === 'rest') {
+        run = restHeal(run);
+      } else if (run.screen === 'treasure') {
+        run = run.offerRelic ? takeRelic(run) : leaveNode(run);
+        if (!run.offerRelic && run.screen === 'treasure') run = leaveNode(run);
+      } else if (run.screen === 'event') {
+        run = run.eventResult ? leaveNode(run) : chooseEvent(run, run.event ? run.event.choices.length - 1 : 0, rng);
+      } else break;
+    }
+
+    if (run.screen === 'won') res.wins++;
+    res.actReached[Math.min(3, run.act)]++;
+    res.nodes += run.nodesCleared;
+    res.finalBag += run.bag.length;
+    res.relics += run.relics.length;
+    res.biggest = Math.max(res.biggest, run.biggestHit);
+  }
+  return res;
+}
+
+console.log('\n=== 3. FULL RUNS (greedy AI, 200 runs) ===');
+console.log('Exit criterion: an 18-node run is completable start to finish.\n');
+const rr = simulateRuns(200);
+console.log(`runs ${rr.runs} · wins ${rr.wins} (${((rr.wins / rr.runs) * 100).toFixed(0)}%)`);
+console.log(`reached act 1 / 2 / 3 : ${rr.actReached[1]} / ${rr.actReached[2]} / ${rr.actReached[3]}`);
+console.log(`avg nodes cleared ${(rr.nodes / rr.runs).toFixed(1)} · avg final bag ${(rr.finalBag / rr.runs).toFixed(1)} · avg relics ${(rr.relics / rr.runs).toFixed(1)}`);
+console.log(`biggest hit seen ${rr.biggest}`);
+const topDeaths = Object.entries(rr.deaths).sort((a, b) => b[1] - a[1]).slice(0, 6);
+console.log('deaths by killer:', topDeaths.map(([k, v]) => `${k} ${v}`).join(' · ') || 'none');
+console.log('');

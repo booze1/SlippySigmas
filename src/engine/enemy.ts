@@ -19,14 +19,8 @@ export const ENCOUNTER_DEFS: Record<string, EncounterDef> = Object.fromEntries(
 export const ENCOUNTER_LIST: EncounterDef[] = ENCOUNTERS;
 
 const NON_ATTACK: ReadonlySet<IntentKind> = new Set([
-  'LOCK',
-  'DRAIN',
-  'GUARD',
-  'BUFF',
-  'CURSE',
-  'STICKY',
-  'SUMMON',
-  'HEAL',
+  'LOCK', 'DRAIN', 'GUARD', 'BUFF', 'CURSE', 'STICKY', 'SUMMON', 'HEAL',
+  'COUNTER', 'CLONE_SELF', 'TAUNT', 'SCRAMBLE', 'INVERT', 'REMOVE_DIE',
 ]);
 
 /** Which boss phase applies at this HP fraction. Returns 0 for normal enemies. */
@@ -84,6 +78,9 @@ export function makeEnemy(defKey: string, rng: Rng): Enemy {
     intent: def.intents[0],
     lastIntentKind: null,
     phase: 0,
+    counter: 0,
+    taunting: false,
+    adapt: {},
   };
   enemy.intent = pickIntent(def, rng, null, 0);
   rollGamble(enemy, rng);
@@ -95,7 +92,10 @@ export function makeEnemy(defKey: string, rng: Rng): Enemy {
  * the boss's coin-flip is still a contract the player can plan around.
  */
 export function rollGamble(enemy: Enemy, rng: Rng): void {
-  enemy.gambleRoll = enemy.intent.kind === 'GAMBLE' ? rng.int(6) + 1 : undefined;
+  enemy.gambleRoll =
+    enemy.intent.kind === 'GAMBLE' || enemy.intent.kind === 'FINAL_ROLL'
+      ? rng.int(6) + 1
+      : undefined;
 }
 
 export function intentDamage(enemy: Enemy): number {
@@ -130,6 +130,20 @@ export function intentLabel(enemy: Enemy): string {
       return `HEAL ${value}`;
     case 'GAMBLE':
       return `${label ?? 'GAMBLE'} — rolled ${enemy.gambleRoll} → ${intentDamage(enemy)}`;
+    case 'COUNTER':
+      return `COUNTER ${value}%`;
+    case 'CLONE_SELF':
+      return 'SPLIT';
+    case 'TAUNT':
+      return 'TAUNT';
+    case 'SCRAMBLE':
+      return 'SCRAMBLE';
+    case 'INVERT':
+      return 'INVERT';
+    case 'REMOVE_DIE':
+      return `TAKE ${value} DIE`;
+    case 'FINAL_ROLL':
+      return `${label ?? 'FINAL ROLL'} — rolled ${enemy.gambleRoll}`;
   }
 }
 
@@ -154,6 +168,19 @@ export function intentIcon(kind: IntentKind): string {
     case 'HEAL':
       return '✚';
     case 'GAMBLE':
+    case 'FINAL_ROLL':
       return '🎲';
+    case 'COUNTER':
+      return '⟲';
+    case 'CLONE_SELF':
+      return '⧉';
+    case 'TAUNT':
+      return '❗';
+    case 'SCRAMBLE':
+      return '🌪';
+    case 'INVERT':
+      return '⇅';
+    case 'REMOVE_DIE':
+      return '✖';
   }
 }

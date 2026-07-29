@@ -172,7 +172,29 @@ export function previewSlot(
 
   const target = currentTarget(state);
   const gMult = globalMult(state.player);
+  const upgraded = state.upgrades.includes(skill.key);
+  // A Rest-node upgrade is a flat +25% on scaling effects and +1 on flat ones,
+  // rather than 34 bespoke "+" variants. Same shape, far less surface area.
+  const up = upgraded ? 1.25 : 1;
+  if (upgraded) out.notes.push('upgraded');
+
+  // The Multiplier rewrites the whole Sigma ladder.
+  if (state.relics.includes('the_multiplier') && out.tier !== 'NONE') {
+    const table: Record<string, number> = { SIGMA: 1.8, DOUBLE: 3.0, OMEGA: 4.8 };
+    out.mult = table[out.tier] ?? out.mult;
+  }
+  // Perfect Pair promotes the first Sigma of the fight one tier.
+  if (state.perfectPairReady && out.tier === 'SIGMA') {
+    out.tier = 'DOUBLE';
+    out.mult = SIGMA_MULT.DOUBLE;
+    out.notes.push('Perfect Pair');
+  } else if (state.perfectPairReady && out.tier === 'DOUBLE') {
+    out.tier = 'OMEGA';
+    out.mult = SIGMA_MULT.OMEGA;
+    out.notes.push('Perfect Pair');
+  }
   const isSigma = out.tier !== 'NONE';
+  const sharp = state.relics.includes('sharp') ? 2 : 0;
 
   // Mark makes the next hit land as at least a SIGMA. It is how defensive and
   // combo builds reach amplified damage without matching faces.
@@ -180,6 +202,13 @@ export function previewSlot(
   if (target?.mark && dmgMult < SIGMA_MULT.SIGMA) {
     dmgMult = SIGMA_MULT.SIGMA;
     out.notes.push('MARK → Sigma');
+  }
+  // The Ratio's INVERT turns amplification against you for a turn — the only
+  // effect in the game that punishes the pillar mechanic. Telegraphed a full
+  // turn ahead, so it is a planning problem rather than a gotcha.
+  if (state.inverted && dmgMult > 1) {
+    dmgMult = 1 / dmgMult;
+    out.notes.push('INVERTED');
   }
 
   const priorFired = state.slots
@@ -200,7 +229,7 @@ export function previewSlot(
           const per = isSigma ? (eff.sigmaRepeatPerPrior ?? eff.repeatPerPrior) : eff.repeatPerPrior;
           hits += per * priorFired;
         }
-        const per = computeHit(out.pip, power, eff.flat ?? 0, dmgMult, gMult, target, !!eff.ignoreBlock);
+        const per = computeHit(out.pip, power * up, (eff.flat ?? 0), dmgMult, gMult, target, !!eff.ignoreBlock) + sharp;
         if (eff.target === 'all') {
           out.aoe += per * hits;
         } else {
@@ -211,17 +240,17 @@ export function previewSlot(
         break;
       }
       case 'block':
-        out.block += Math.floor(out.pip * eff.power);
+        out.block += Math.floor(out.pip * eff.power * up);
         if (eff.persist) out.notes.push('Block persists');
         break;
       case 'heal':
-        out.heal += Math.floor(out.pip * (isSigma ? (eff.sigmaPower ?? eff.power) : eff.power));
+        out.heal += Math.floor(out.pip * (isSigma ? (eff.sigmaPower ?? eff.power) : eff.power) * up);
         break;
       case 'armor':
         if (!eff.sigmaOnly || isSigma) out.armor += eff.amount;
         break;
       case 'slip':
-        out.slip += isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
+        out.slip += (isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount) + (upgraded ? 1 : 0);
         break;
       case 'slipIfFace': {
         const has = dice.some((d) => d.face === eff.face);

@@ -20,10 +20,10 @@ But you'll rarely roll a triple. What you have instead is **SLIP** — a currenc
 
 ## Status
 
-**Phase 2 built and playable — all of Act 1.** 34 skills, 22 dice, 10 status
-effects, 12 encounters, multi-enemy combat with targeting, and a three-phase
-boss. The design bible is complete and the balance numbers are validated by
-simulation.
+**Phase 3 built and playable — the complete run.** Three acts, a branching
+map, 34 skills, 22 dice, 10 statuses, 21 enemies, 6 elites, 3 phased bosses,
+18 relics, 14 events, shops, rests, die forging and skill upgrades. Runs
+complete start to finish; 38 of 200 simulated runs won.
 
 ### Play it
 
@@ -62,10 +62,15 @@ glow **gold** — that is the whole game in one affordance. Spend Slip on the
 verbs to bend a die's face before you commit. When there is more than one
 enemy, tap one to target it. Nothing is locked in until you hit RESOLVE.
 
-**Worth trying:** switch the encounter to `3-enemy swarm` (the act's real
-difficulty spike — 71% win rate), then to `BOSS — Glizzy`, whose third phase
-halves any hit that is not amplified. Swap the loadout to Sigma Slam and
-Colossal L to reach the upper Sigma tiers.
+**The run:** pick a route on the act map — the whole thing is visible before
+you commit, edges included. Battles pay skills and gold, elites pay relics and
+dice, Rest nodes make you choose between healing, forging a die's faces, and
+upgrading a skill forever. Clear an act boss to gain max HP and move on.
+
+**Worth seeing:** Glizzy's third phase halves any hit that is not amplified —
+the first moment the game *demands* Sigma rather than rewarding it. The
+Algorithm's final phase is a naked roll-off, after a whole run spent learning to
+bend dice.
 
 ## Documents
 

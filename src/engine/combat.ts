@@ -3,6 +3,7 @@
 // save/resume, deterministic replay, and headless simulation for free.
 
 import type {
+  BagEntry,
   Die,
   Enemy,
   GameState,
@@ -30,7 +31,13 @@ import { tierLabel, TIER_RANK, SIGMA_MULT } from './sigma.js';
 export const SLOT_COUNT = 4;
 export const DEFAULT_LOADOUT = ['softening', 'cleave', 'fumble', 'brace'];
 export const DEFAULT_BAG = ['standard_d6', 'standard_d6', 'standard_d6', 'standard_d6'];
-export const BAG_CAP = 8;
+/**
+ * Bag capacity. Lowered from 8 after simulation showed damage scaling with dice
+ * count far faster than the output curve assumed — at 8 dice, Omega Sigma fired
+ * on 36% of activations, turning a rare spectacle into routine.
+ * See docs/02-balance-math.md §12 Finding D. Relics can raise it.
+ */
+export const BAG_CAP = 7;
 
 /**
  * Slip carried into turn 1. Was 0 in the first design pass; simulation showed
@@ -52,11 +59,18 @@ function log(s: GameState, kind: LogEntry['kind'], text: string): void {
 
 export interface NewGameOpts {
   seed?: number;
-  bag?: string[];
+  bag?: (string | BagEntry)[];
+  slots?: number;
+  upgrades?: string[];
+  slipCapBonus?: number;
   loadout?: (string | null)[];
   encounterKey?: string;
   maxHp?: number;
   startSlip?: number;
+  hp?: number;
+  gold?: number;
+  relics?: string[];
+  act?: number;
 }
 
 export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } {
@@ -66,15 +80,21 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
   resetEnemyCounter();
 
   const maxHp = opts.maxHp ?? 60;
-  const bag = (opts.bag ?? DEFAULT_BAG).slice(0, BAG_CAP);
+  const bag = opts.bag ?? DEFAULT_BAG;
   const loadout = opts.loadout ?? DEFAULT_LOADOUT;
   const encounterKey = opts.encounterKey ?? 'a1_wraith';
   const encounter = ENCOUNTER_DEFS[encounterKey];
   if (!encounter) throw new Error(`Unknown encounter: ${encounterKey}`);
 
+  const relics = opts.relics ?? [];
   const dice = bag.map((k) => makeDie(k, rng));
   // The Slip raises the cap just by being in the bag.
-  const slipCap = 10 + dice.filter((d) => hasTrait(d, 'theslip')).length * 5;
+  let slipCap = 10 + dice.filter((d) => hasTrait(d, 'theslip')).length * 5;
+  if (relics.includes('deep_pockets')) slipCap += 5;
+  slipCap += opts.slipCapBonus ?? 0;
+  const slotCount =
+    opts.slots ??
+    SLOT_COUNT + (relics.includes('fifth_slot') ? 1 : 0) + (relics.includes('sixth_slot') ? 1 : 0);
   const enemies = encounter.enemies.map((k) => makeEnemy(k, rng));
 
   const state: GameState = {
@@ -82,19 +102,19 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
     turn: 0,
     phase: 'PLAN',
     player: {
-      hp: maxHp,
+      hp: opts.hp ?? maxHp,
       maxHp,
       block: 0,
       blockPersists: false,
       armor: 0,
-      slip: opts.startSlip ?? START_SLIP,
+      slip: (opts.startSlip ?? START_SLIP) + (relics.includes('warm_hands') ? 2 : 0),
       slipCap,
-      gold: 0,
+      gold: opts.gold ?? 0,
       hyped: 0,
       slick: 0,
       cursed: 0,
       sticky: false,
-      jamImmuneTurns: 0,
+      jamImmuneTurns: relics.includes('steady_grip') ? 9999 : 0,
       incomingJam: 0,
       freeNudges: 0,
       freeClones: 0,
@@ -102,7 +122,7 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
       counter: 0,
     },
     dice,
-    slots: Array.from({ length: SLOT_COUNT }, (_, i) => ({ skillKey: loadout[i] ?? null })),
+    slots: Array.from({ length: slotCount }, (_, i) => ({ skillKey: loadout[i] ?? null })),
     enemies,
     targetId: enemies[0]?.id ?? null,
     encounterKey,
@@ -117,6 +137,13 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
       sigmaCounts: { NONE: 0, SIGMA: 0, DOUBLE: 0, OMEGA: 0 },
     },
     extraTurn: false,
+    scramblePending: false,
+    inverted: false,
+    turnPip: 0,
+    act: opts.act ?? 1,
+    relics,
+    upgrades: opts.upgrades ?? [],
+    perfectPairReady: relics.includes('perfect_pair'),
   };
 
   startTurn(state, rng);
@@ -182,6 +209,27 @@ function startTurn(s: GameState, rng: Rng): void {
       log(s, 'enemy', `${s.player.incomingJam} dice jammed.`);
     }
     s.player.incomingJam = 0;
+  }
+
+  if (s.scramblePending) {
+    for (const die of s.dice) if (!die.frozen) rollDie(die, rng);
+    s.scramblePending = false;
+    log(s, 'enemy', 'SCRAMBLE — your bag is rerolled.');
+  }
+
+  // Kingmaker fires every OTHER turn. Guaranteeing a pair every single turn
+  // would invalidate the whole manipulation lane — why spend Slip when a relic
+  // does it free? Alternating keeps it exciting when it lands.
+  if (s.relics.includes('kingmaker') && s.turn % 2 === 0 && s.dice.length > 1) {
+    const pool = s.dice.filter((d) => !isWild(d));
+    if (pool.length > 1) {
+      const source = rng.pick(pool);
+      const targets = pool.filter((d) => d.id !== source.id && facesOf(d).includes(source.face));
+      if (targets.length) {
+        rng.pick(targets).face = source.face;
+        log(s, 'slip', `Kingmaker sets a die to ${source.face}.`);
+      }
+    }
   }
 
   // Bad-luck rebate, Cursed d6 bite, Greedy payout.
@@ -489,6 +537,16 @@ function dealToEnemy(
   s.stats.damageDealt += remaining;
   if (amount > s.stats.biggestHit) s.stats.biggestHit = amount;
 
+  if (enemy.counter > 0 && opts.isHit !== false) {
+    const back = Math.floor(amount * enemy.counter);
+    if (back > 0) {
+      s.player.hp -= Math.max(0, back - s.player.armor);
+      s.stats.damageTaken += Math.max(0, back - s.player.armor);
+      log(s, 'enemy', `${enemy.name} reflects ${back}.`);
+    }
+    enemy.counter = 0;
+  }
+
   // Bleed triggers per hit, which is what makes Death by 1000 a Bleed engine.
   if (opts.isHit !== false && enemy.bleed > 0 && enemy.hp > 0) {
     enemy.hp -= enemy.bleed;
@@ -597,6 +655,7 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
 
   const s = clone(state);
   const events: ResolveEvent[] = [];
+  s.turnPip = 0;
 
   // ---------------------------------------------------- player skills
   for (let i = 0; i < s.slots.length; i++) {
@@ -611,6 +670,7 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
 
     const isSigma = p.tier !== 'NONE';
     s.stats.sigmaCounts[p.tier] += 1;
+    s.turnPip += p.pip;
 
     const target = currentTarget(s);
     const alive = livingEnemies(s);
@@ -667,6 +727,10 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
 
     applyPostEffects(s, skill.effects, isSigma, rng);
 
+    if (s.relics.includes('hype_machine') && (p.tier === 'DOUBLE' || p.tier === 'OMEGA')) {
+      s.player.hyped = Math.min(4, s.player.hyped + 1);
+    }
+    if (s.perfectPairReady && isSigma) s.perfectPairReady = false;
     if (skill.effects.some((e) => e.type === 'oncePerFight')) s.slots[i].spent = true;
 
     // Delete: a kill refunds the turn.
@@ -779,6 +843,61 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
           log(s, 'enemy', `${enemy.name} heals the group ${intent.value}.`);
           break;
         }
+        case 'COUNTER':
+          enemy.counter = intent.value / 100;
+          log(s, 'enemy', `${enemy.name} braces to reflect ${intent.value}%.`);
+          break;
+        case 'CLONE_SELF': {
+          if (s.enemies.length < 5) {
+            const half = Math.max(1, Math.ceil(enemy.hp / 2));
+            enemy.hp = half;
+            enemy.maxHp = half;
+            const copy = makeEnemy(enemy.defKey, rng);
+            copy.hp = half;
+            copy.maxHp = half;
+            s.enemies.push(copy);
+            log(s, 'enemy', `${enemy.name} splits in two.`);
+          }
+          break;
+        }
+        case 'TAUNT':
+          for (const e of s.enemies) e.taunting = false;
+          enemy.taunting = true;
+          s.targetId = enemy.id;
+          log(s, 'enemy', `${enemy.name} taunts — you must hit it.`);
+          break;
+        case 'SCRAMBLE':
+          s.scramblePending = true;
+          log(s, 'enemy', `${enemy.name} will scramble your bag.`);
+          break;
+        case 'INVERT':
+          s.inverted = true;
+          log(s, 'enemy', `${enemy.name} INVERTS — matching will hurt you next turn.`);
+          break;
+        case 'REMOVE_DIE': {
+          const victims = s.dice.filter((d) => !d.temp);
+          if (victims.length > 1) {
+            const gone = rng.pick(victims);
+            s.dice = s.dice.filter((d) => d.id !== gone.id);
+            log(s, 'enemy', `${enemy.name} takes a die for the rest of the fight.`);
+          }
+          break;
+        }
+        case 'FINAL_ROLL': {
+          // Boss and player each put up a number; the difference is the damage.
+          // After a whole run learning to bend dice, the last fight is a naked
+          // roll — but by then you built the bag that wins it.
+          const bossRoll = (enemy.gambleRoll ?? 1) * Math.max(1, s.dice.length) * 2;
+          const diff = bossRoll - s.turnPip;
+          if (diff > 0) {
+            dealToPlayer(s, diff, enemy);
+            log(s, 'enemy', `FINAL ROLL — ${bossRoll} vs your ${s.turnPip}: you take ${diff}.`);
+          } else {
+            dealToEnemy(s, enemy, -diff, { isHit: false });
+            log(s, 'player', `FINAL ROLL — ${bossRoll} vs your ${s.turnPip}: it takes ${-diff}.`);
+          }
+          break;
+        }
       }
 
       if (stagMult < 1) enemy.stagger = Math.max(0, enemy.stagger - 1);
@@ -793,10 +912,11 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
 
   // --------------------------------------------------------- end of turn
   if (!s.player.sticky) {
+    const per = s.relics.includes('momentum') ? 2 : 1;
     const unspent = s.dice.filter((d) => d.slot === null && !d.temp && !d.jammed).length;
     if (unspent > 0) {
-      gainSlip(s, unspent);
-      log(s, 'slip', `${unspent} unspent dice → +${unspent} Slip.`);
+      gainSlip(s, unspent * per);
+      log(s, 'slip', `${unspent} unspent dice → +${unspent * per} Slip.`);
     }
   } else {
     log(s, 'enemy', 'Sticky — no Slip from unspent dice.');
@@ -811,6 +931,7 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
 
   for (const e of s.enemies) decayEnemy(e);
   decayPlayer(s.player);
+  s.inverted = false;
 
   if (s.player.hp <= 0) {
     s.phase = 'LOSE';

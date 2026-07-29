@@ -110,17 +110,36 @@ see a Double Sigma).
 
 ---
 
-## Phase 3 — The Run
+## Phase 3 — The Run ✅ BUILT
 
-- [ ] Map generator with all node types and the guarantee-validation pass
-- [ ] Reward screens with rarity weighting
-- [ ] Shop, Rest (heal/forge/upgrade), Treasure
-- [ ] 14 events
-- [ ] 3 acts of enemies, 6 elites, 3 bosses with phases
-- [ ] Gold economy
-- [ ] Death and victory screens
+- [x] Map generator with all node types and the guarantee-validation pass
+      (regenerates rather than patching when a guarantee fails)
+- [x] Reward screens with per-act rarity weighting
+- [x] Shop, Rest (heal / forge / upgrade), Treasure
+- [x] 14 events
+- [x] 3 acts — 21 enemies, 6 elites, 3 phased bosses, 34 encounters
+- [x] Gold economy with escalating die-removal pricing
+- [x] Death and victory screens
+- [x] **Bonus:** 18 relics, die forging, skill upgrades, SVG route edges on the
+      map, and a full-run simulator
 
-**Exit criterion:** a complete 18-node run is playable start to finish.
+**Exit criterion — met.** 38 of 200 simulated runs completed all three acts.
+Act 1 clear rate 85%, average 5.4 nodes cleared, average final bag 6.5 of 7.
+
+### What Phase 3 changed
+
+- **Bag cap 8 → 7** (Finding D closed). Relics raise it: Big Bag +1, Whole Bag +2.
+- **Max HP now grows** — +12 per boss, +4 per elite. docs/02 §6 budgeted Act 3
+  around 85–100 max HP but nothing granted any, so players met Act 3 enemies on
+  60 HP. See §14 Finding I.
+- **The map draws its edges.** Node types alone do not tell you which routes
+  exist, and routing with full information is the point of the screen.
+
+**Methodology note (§14 Finding J):** the first full-run measurement said 2%.
+Most of that was the simulator leaving shops without buying and randomly
+clobbering its own loadout. Teaching it to shop and to replace its weakest skill
+took wins to 19% with no balance change. When a win rate looks alarming, check
+the agent before changing the game.
 
 ---
 

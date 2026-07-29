@@ -49,6 +49,12 @@ export interface Die {
   echoed?: boolean;
 }
 
+/** A die in the run's bag. `faces` overrides the definition when forged. */
+export interface BagEntry {
+  key: string;
+  faces?: number[];
+}
+
 // ---------------------------------------------------------------- statuses
 
 export type EnemyStatus = 'burn' | 'brittle' | 'stagger' | 'bleed' | 'mark';
@@ -134,7 +140,15 @@ export type IntentKind =
   | 'CURSE'
   | 'STICKY'
   | 'HEAL'
-  | 'GAMBLE';
+  | 'GAMBLE'
+  // Act 2+
+  | 'COUNTER'      // reflects part of the next hit taken
+  | 'CLONE_SELF'   // splits into two half-HP copies
+  | 'TAUNT'        // forces the player to target this enemy
+  | 'SCRAMBLE'     // rerolls the player's bag AFTER Slip has been spent
+  | 'INVERT'       // Sigma multipliers become divisors for one turn
+  | 'REMOVE_DIE'   // takes a die out of the bag for the rest of the fight
+  | 'FINAL_ROLL';  // boss and player each roll; the difference is damage
 
 export interface IntentDef {
   kind: IntentKind;
@@ -182,8 +196,13 @@ export interface Enemy {
   intent: IntentDef;
   lastIntentKind: IntentKind | null;
   phase: number;
-  /** GAMBLE intents pre-roll and display the result. */
+  /** GAMBLE and FINAL_ROLL pre-roll and display the result. */
   gambleRoll?: number;
+  /** Reflects this fraction of the next hit taken. */
+  counter: number;
+  taunting: boolean;
+  /** Adaptive bosses build resistance to the tier used most recently. */
+  adapt: Partial<Record<SigmaTier, number>>;
 }
 
 // ---------------------------------------------------------------- encounters
@@ -242,6 +261,19 @@ export interface GameState {
   stats: RunStats;
   /** Set by Delete when it kills; suppresses the enemy phase. */
   extraTurn: boolean;
+  /** Queued by SCRAMBLE — rerolls the bag at the start of next turn. */
+  scramblePending: boolean;
+  /** Set by INVERT — Sigma multipliers divide instead of multiply this turn. */
+  inverted: boolean;
+  /** Total PIP the player committed this turn, for FINAL_ROLL. */
+  turnPip: number;
+  act: number;
+  /** Relics carried into this fight. */
+  relics: string[];
+  /** Skill keys the player has upgraded at Rest nodes. */
+  upgrades: string[];
+  /** Perfect Pair: consumed by the first Sigma of the fight. */
+  perfectPairReady: boolean;
 }
 
 export interface LogEntry {

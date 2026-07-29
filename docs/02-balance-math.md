@@ -526,3 +526,64 @@ Unchanged from §12 Finding D and still awaiting a decision. At 8 dice, Omega
 Sigma fires on more than a third of activations — a tier meant to be a rare
 spectacle becomes routine. Bag cap 8 → 7 plus slower dice acquisition remains
 the recommendation, and it now blocks Phase 3's reward tables.
+
+---
+
+## 14 — Phase 3 Simulation (the full run)
+
+200 complete runs, greedy AI, all three acts. `npm run sim`.
+
+### Exit criterion met — runs complete start to finish
+
+| Metric | Value |
+|---|---|
+| Runs won | **38 / 200 (19%)** |
+| Died in Act 1 / reached Act 2 / reached Act 3 | 31 / 77 / 92 |
+| **Act 1 clear rate** | **85%** |
+| Avg nodes cleared | 5.4 |
+| Avg final bag | 6.5 dice (cap 7) |
+| Avg relics | 2.5 |
+| Biggest hit seen | 436 |
+
+Deaths spread across all three bosses and the Act 2 mid-game — The
+Maincharacter 27, The Algorithm 23, Glizzy 20, Mogger 19. No single enemy
+accounts for more than ~17% of deaths, comfortably inside the §10 guardrail
+that no enemy should own 30%.
+
+### Finding I — max HP never grew, and the survivability budget assumed it would
+
+§6 budgets Act 3 around an expected max HP of **85–100**, closing the gap
+between 60 base HP and 38–50 incoming damage per turn. Nothing in the
+implementation actually granted max HP: only Thick Skin (+8) existed, and it is
+one common relic among eighteen. Players were entering Act 3 on roughly 60 HP
+against enemies designed for 90.
+
+**Fix:** clearing an act boss grants **+12 max HP**, clearing an elite grants
+**+4**. A run that takes both elites per act now arrives at Act 3 around 60 + 24
++ 16 = **100 max HP**, which is what §6 was written around. Full-run wins went
+2% → 3% on this change alone, and Act 3 arrivals 14 → 24.
+
+### Finding J — the measurement was AI-bound, not balance-bound
+
+The first full-run pass reported 2%. That number was mostly the simulator's own
+incompetence: it left shops without buying, and replaced a *random* loadout slot
+on every skill reward, actively destroying its own build.
+
+Teaching it two things a human does automatically — buy the cheapest affordable
+relic or die, and replace the lowest-rarity skill rather than a random one —
+moved wins from 3% to **19%** and Act 3 arrivals from 24 to 92, with no balance
+change whatsoever.
+
+That is worth recording as a methodology note: **when a simulated win rate looks
+alarming, check whether the agent is playing the game before changing the
+game.** The remaining gap to the §10 target of 30–45% is probably still partly
+AI — it never forges, never upgrades at Rest, never buys skills, and picks
+events by position rather than by value. I would not tune Act 2 or 3 numbers
+until a human has played a dozen runs.
+
+### Bag cap 8 → 7 (Finding D, closed)
+
+Applied. Relics can still raise it: Big Bag +1, The Whole Bag +2. Average final
+bag across 200 runs is 6.5, so the cap binds late rather than constantly, which
+is the intent — the second half of a run should be about replacement, not
+accumulation.

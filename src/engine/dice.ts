@@ -1,6 +1,6 @@
 // Dice: definitions, rolling, faces, and trait queries.
 
-import { WILD, type Die, type DieDef, type DieTrait } from './types.js';
+import { WILD, type BagEntry, type Die, type DieDef, type DieTrait } from './types.js';
 import type { Rng } from './rng.js';
 import { DICE } from '../data/dice.js';
 
@@ -21,6 +21,11 @@ export function defOf(die: Die): DieDef | undefined {
 
 export function traitOf(die: Die): DieTrait | undefined {
   return die.temp ? undefined : DICE_DEFS[die.defKey]?.trait;
+}
+
+/** Faces of a bag entry, honouring forge overrides. */
+export function entryFaces(entry: BagEntry): number[] {
+  return entry.faces ?? DICE_DEFS[entry.key]?.faces ?? [1, 2, 3, 4, 5, 6];
 }
 
 export function hasTrait(die: Die, trait: DieTrait): boolean {
@@ -53,17 +58,22 @@ export function faceLabel(die: Die): string {
 
 let dieCounter = 0;
 
-export function makeDie(defKey: string, rng: Rng): Die {
-  const def = DICE_DEFS[defKey];
-  if (!def) throw new Error(`Unknown die: ${defKey}`);
+export function makeDie(entry: string | BagEntry, rng: Rng): Die {
+  const key = typeof entry === 'string' ? entry : entry.key;
+  const override = typeof entry === 'string' ? undefined : entry.faces;
+  const def = DICE_DEFS[key];
+  if (!def) throw new Error(`Unknown die: ${key}`);
+  const faces = override ?? def.faces;
   return {
     id: `d${dieCounter++}`,
-    defKey,
-    face: rng.pick(def.faces),
+    defKey: key,
+    face: rng.pick(faces),
     nudges: 0,
     frozen: false,
     jammed: false,
     slot: null,
+    // Forged dice carry their own face list; unforged ones read the definition.
+    ...(override ? { faces: override } : {}),
   };
 }
 

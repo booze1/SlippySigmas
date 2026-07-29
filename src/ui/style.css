@@ -378,3 +378,127 @@ details > summary:focus-visible { outline: 2px solid var(--gold); outline-offset
     transition-duration: .01ms !important;
   }
 }
+
+/* ---------------------------------------------------------- run shell
+   The map, rewards, shops, rests and events are all one column of cards.
+   Nothing here competes with combat for attention — gold still means Sigma,
+   so these screens lean on the neutral and the panel tones instead. */
+
+#runbar { display: flex; flex-direction: column; gap: 5px; }
+.runrow { display: flex; align-items: center; gap: 10px; }
+.runrow .hpbar { flex: 1 1 auto; }
+.pill.act { color: var(--gold); background: rgba(245,197,24,.12); letter-spacing: 1px; }
+.pill.goldp { color: var(--gold); }
+
+.screen { display: flex; flex-direction: column; gap: 10px; }
+.screen h2 {
+  font-family: var(--font-loud); font-size: 17px; font-weight: 800;
+  letter-spacing: .5px; text-wrap: balance;
+}
+.screen h3 {
+  font-size: 11px; letter-spacing: 1.5px; color: var(--gold);
+  text-transform: uppercase; margin-top: 4px;
+}
+.screen .lead { color: var(--dim); font-size: 12px; line-height: 1.5; max-width: 60ch; }
+.screen .warn { color: var(--danger); font-size: 11px; }
+
+.offers { display: flex; flex-direction: column; gap: 6px; }
+
+.card {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 5px;
+  text-align: left; color: var(--neutral); font-family: var(--font-data);
+  width: 100%;
+}
+button.card.pick { cursor: pointer; transition: border-color .12s, transform .12s, background .12s; }
+button.card.pick:hover:not(:disabled) { border-color: var(--slip); transform: translateY(-2px); }
+button.card.pick:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+button.card.pick:disabled, .card.poor { opacity: .4; cursor: not-allowed; }
+.card.sold { opacity: .3; text-align: center; font-size: 11px; }
+.cardhead {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; font-weight: 700;
+}
+.carddesc { font-size: 11px; color: var(--dim); line-height: 1.45; }
+.cost { font-size: 10px; color: var(--slip); }
+.price { margin-left: auto; color: var(--gold); font-size: 12px; }
+
+.rar { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; }
+.rar.common { background: #3a3650; color: #b9b4cc; }
+.rar.uncommon { background: rgba(79,209,197,.18); color: var(--slip); }
+.rar.rare { background: rgba(91,141,239,.2); color: var(--block); }
+.rar.legendary { background: rgba(245,197,24,.2); color: var(--gold); }
+
+.faces { display: flex; gap: 3px; flex-wrap: wrap; }
+.faces i {
+  font-style: normal; font-size: 10px; background: #1a1826;
+  border: 1px solid var(--line); border-radius: 4px;
+  min-width: 18px; text-align: center; padding: 1px 3px;
+}
+.faces.big i { font-size: 14px; min-width: 26px; padding: 4px; }
+
+button.wide {
+  background: var(--gold); color: #17140a; border: 0; border-radius: var(--radius);
+  padding: 14px; font-family: var(--font-loud); font-weight: 800; font-size: 13px;
+  letter-spacing: 2px; cursor: pointer; box-shadow: 0 4px 0 #b8940f; min-height: 50px;
+}
+button.wide:active { transform: translateY(3px); box-shadow: 0 1px 0 #b8940f; }
+button.wide:focus-visible { outline: 2px solid var(--neutral); outline-offset: 3px; }
+button.wide.ghost {
+  background: transparent; color: var(--dim); border: 1px solid var(--line);
+  box-shadow: none; letter-spacing: 1px; font-size: 11px; min-height: 42px;
+}
+
+/* ------------------------------------------------------------- the map */
+
+.mapgrid {
+  background: #16141f; border-radius: var(--radius);
+  display: grid; place-items: center; overflow-x: auto;
+}
+.mapinner { position: relative; }
+.edges { position: absolute; inset: 0; pointer-events: none; }
+.edge { stroke: #322e45; stroke-width: 2; }
+.edge.live { stroke: var(--gold); stroke-width: 2.5; opacity: .9; }
+.mapnode {
+  position: absolute;
+  width: 46px; height: 46px; border-radius: 10px;
+  background: var(--panel-2); border: 2px solid var(--line);
+  color: var(--dim); font-size: 15px; cursor: default;
+  display: grid; place-items: center; font-family: var(--font-data);
+  transition: transform .12s, border-color .12s;
+}
+.mapnode .mi { line-height: 1; }
+.mapnode.open {
+  border-color: var(--gold); color: var(--neutral); cursor: pointer;
+  box-shadow: 0 0 12px rgba(245,197,24,.25);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.mapnode.open:hover { transform: translateY(-3px); }
+.mapnode.open:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.mapnode.here { border-color: var(--slip); color: var(--slip); }
+.mapnode.done { opacity: .35; }
+@keyframes pulse { 50% { box-shadow: 0 0 20px rgba(245,197,24,.5); } }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 10px; color: var(--dim); justify-content: center;
+}
+.legend b { color: var(--neutral); }
+
+/* --------------------------------------------------------- end screens */
+
+.screen.end { text-align: center; align-items: center; padding-top: 20px; }
+.screen.end h2 { font-size: 30px; letter-spacing: 3px; }
+.screen.end.won h2 { color: var(--gold); }
+.screen.end.dead h2 { color: var(--danger); }
+.statgrid.big { font-size: 13px; width: 100%; max-width: 300px; gap: 6px 12px; }
+
+/* ------------------------------------------------------- details panel */
+
+.bagrow {
+  display: flex; justify-content: space-between; gap: 8px; align-items: center;
+  padding: 4px 0; border-bottom: 1px solid #262234; font-size: 10px;
+}
+.bagrow:last-child { border-bottom: 0; }
+.bagrow .dim { color: var(--dim); text-align: right; max-width: 60%; }
