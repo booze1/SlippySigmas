@@ -1,0 +1,20 @@
+{
+  "name": "slippy-sigmas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Roll bad dice. Make them good. Delete everything.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "sim": "tsx src/sim/probe.ts"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

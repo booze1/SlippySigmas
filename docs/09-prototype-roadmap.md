@@ -1,6 +1,6 @@
 # 09 — Prototype Roadmap
 
-Build order for the web prototype. **Nothing here is built yet** — this is the plan the GDD hands to implementation.
+Build order for the web prototype. **Phase 1 is built and playable** (`npm run dev`); Phases 2–6 are the plan.
 
 ---
 
@@ -31,23 +31,46 @@ Every number in [`02-balance-math.md`](02-balance-math.md) is analytically deriv
 
 ---
 
-## Phase 1 — The Feel Test (highest priority)
+## Phase 1 — The Feel Test ✅ BUILT
 
 **Goal: prove the core moment is fun before building anything around it.**
 
 One screen. No map, no meta, no art. Grey boxes.
 
-- [ ] Dice tray: roll 4d6, render faces
-- [ ] Drag-to-slot with legal/illegal targets
-- [ ] 4 skill slots with cost validation
-- [ ] PIP calculation and Sigma detection
-- [ ] Live damage preview on hover
-- [ ] Slip meter, all six verbs with escalating Nudge
-- [ ] One enemy with a visible intent, HP, block
-- [ ] Resolve → enemy acts → next turn
-- [ ] End-of-turn dice→Slip conversion
+- [x] Dice tray: roll 4d6, render faces
+- [x] Drag-to-slot with legal/illegal targets (plus tap-to-slot and keyboard)
+- [x] 4 skill slots with cost validation
+- [x] PIP calculation and Sigma detection
+- [x] Live damage preview on hover — legal slots glow teal, Sigma slots glow gold
+- [x] Slip meter, all six verbs with escalating Nudge
+- [x] Enemy with visible intent, HP, block, Brittle, Burn (6 to choose from)
+- [x] Resolve → enemy acts → next turn
+- [x] End-of-turn dice→Slip conversion
+- [x] **Bonus:** headless balance simulator (pulled forward from Phase 6)
+- [x] **Bonus:** in-page feel-test panel — swap bag, loadout and enemy live
 
-**Exit criterion: play 20 turns against a dummy. If the Slip→Sigma decision isn't already interesting with grey boxes and no juice, the design is wrong and the rest of this document needs revision.** Everything downstream assumes this test passes.
+**Run it:** `npm install && npm run dev` · **Simulate:** `npm run sim`
+
+### What Phase 1 changed in the design
+
+Three rules changes came out of building and measuring it, all recorded in
+[`02-balance-math.md`](02-balance-math.md) §12:
+
+1. **Fight-start Slip 0 → 3.** Fights end too fast for end-of-turn income to
+   ever reach the player; the pillar mechanic was dormant.
+2. **Tap-to-slot is value-ranked, not leftmost-first.** Leftmost-first made the
+   laziest input the worst play.
+3. **Assignment order is a real strategic layer.** Filling left-to-right starves
+   3d and 4d skills so hard that Double Sigma fired 0.0% of the time.
+
+And one open decision, **Finding D**: damage scales with bag size much faster
+than the §5 curve assumed — 8 plain d6 with un-upgraded Act 1 skills already
+hits the Act 3 boss output target. Needs a call before Phase 3 sets reward
+tables. Recommendation: bag cap 8 → 7, plus slower dice acquisition.
+
+**Exit criterion — still open:** play 20 turns by hand. The build exists and the
+numbers check out, but whether the Slip→Sigma decision is *fun* is a human
+judgement no simulator can make.
 
 ---
 
@@ -126,14 +149,14 @@ src/
     enemy.ts       # intent selection
     map.ts         # generation + validation
     rng.ts         # seeded, deterministic
-  data/            # all content as JSON — no content in code
-    dice.json  skills.json  enemies.json  relics.json  events.json
+  data/            # pure content, no logic
+    dice.ts  skills.ts  enemies.ts  (relics, events to come)
   ui/
   sim/             # headless balance simulator
   meta/
 ```
 
-**All content lives in `data/*.json`.** The catalogues in docs 03/04/05 are written to be transcribed directly into these files. Balance changes should never require touching code.
+**All content lives in `src/data/`.** These are typed `const` arrays rather than raw JSON — same data, but a typo in a skill cost becomes a compile error instead of a runtime surprise. They stay trivially JSON-serializable if a data pipeline is ever wanted. The catalogues in docs 03/04/05 transcribe directly into them, and balance changes never require touching engine code.
 
 ---
 
@@ -141,8 +164,9 @@ src/
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Core loop isn't fun** | Critical | Phase 1 exists solely to find this out in days, not months |
-| Slip trivializes Sigma | High | Escalating Nudge already fixes the analytical case; simulator confirms |
+| **Core loop isn't fun** | Critical | Phase 1 is built — needs 20 minutes of human hands to answer |
+| Slip trivializes Sigma | High | Escalating Nudge holds up; measured Sigma rate 28–68% by loadout, no runaway |
+| **Bag size outruns the damage curve** | **High** | **Measured, real. See §12 Finding D — needs a decision before Phase 3** |
 | 4 skill slots too restrictive for Combo | Medium | Test 4 vs 5 base slots in Phase 2 |
 | Turn time too long, runs exceed 15 min | Medium | Levers listed in [`06-run-structure.md`](06-run-structure.md) §9 |
 | Sigma Stone trivializes Acts 1–2 | Medium | Simulator flags it; fallback is face 5→4 and rarity drop |
@@ -152,8 +176,16 @@ src/
 
 ---
 
-## What I'd Build First, Concretely
+## What's Next, Concretely
 
-If the answer to "what's the next commit" is needed: **Phase 1, and specifically the tray + slotting + preview**. Not the map, not the art, not the content.
+Phase 1 answered the questions a simulator can answer. The one it cannot answer
+is the one that matters: **play it for twenty minutes.**
 
-The entire design rests on one unproven assumption — that staring at `[5,5,3,2]` and deciding how to spend 3 Slip is *interesting*. Two days of grey boxes answers that. Everything in these nine documents is downstream of it.
+If staring at `[5,5,3,2]` with 3 Slip is interesting, Phase 2 is worth building
+and everything in these nine documents is worth keeping. If it is not, no
+amount of content, art, or juice downstream will rescue it — and finding that
+out cost one build instead of six months.
+
+Two decisions are waiting on that verdict:
+1. **Finding D** — bag cap and dice acquisition rate (blocks Phase 3 reward tables).
+2. **Finding E** — whether Sigma Stone drops to face 4.

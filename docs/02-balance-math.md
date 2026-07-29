@@ -65,9 +65,10 @@ Comparing a greedy non-matching play against a Sigma play, 4d6, 2-dice skill at 
 ### Slip income
 | Source | Rate |
 |---|---|
+| **Fight start** | **3** (revised from 0 — see §12 Finding B) |
 | Unspent dice | 1 each — typically 2/turn |
 | `1`s rolled | n/6 per turn — 0.67 at 4 dice, 1.0 at 6 dice |
-| **Typical total** | **~2.7 Slip/turn** |
+| **Typical total** | **~2.7 Slip/turn** after turn 1 |
 
 ### The problem with flat 1-cost Nudge
 
@@ -296,3 +297,123 @@ Non-negotiable logging, because none of the above is trustworthy without data:
 5. Per-die: pick rate, and win rate of runs containing it.
 
 Skill pick rate and per-die win rate are the two that will actually drive balance changes. Everything else is context.
+
+---
+
+## 12 — Simulation Results (first pass)
+
+Everything above §11 was derived analytically. This section is what the
+headless simulator actually measured. Run it yourself with `npm run sim`.
+
+Method: 200,000 random rolls for the probability check; 500 fights per row for
+combat, played by a greedy AI that fills slots best-combination-first and
+spends Slip on whichever nudge sequence has the best value-per-point.
+
+### Finding A — the probability table is correct ✅
+
+| Dice | P(pair) measured | doc | P(triple) measured | doc | P(quad) measured | doc |
+|---|---|---|---|---|---|---|
+| 4 | 72.2% | 72.2% | 9.8% | 9.7% | 0.5% | 0.5% |
+| 5 | 90.7% | 90.7% | 21.2% | 21.3% | 2.0% | 2.0% |
+| 6 | 98.5% | 98.5% | 36.7% | 36.7% | 5.2% | 5.2% |
+| 7 | 100% | 100% | 54.2% | 54.1% | 10.6% | — |
+| 8 | 100% | 100% | 70.7% | 70.7% | 18.3% | — |
+
+Every hand-derived figure lands within 0.1 percentage points. §1 stands.
+
+### Finding B — Slip was dead on arrival (fixed)
+
+The design had the player entering every fight with **0 Slip**, with income
+arriving only at *end* of turn. The simulator showed basic fights ending in
+**1.9–2.9 turns**. A player therefore had nothing to spend during turn 1 and
+almost nothing during turn 2 — the pillar mechanic was inactive for most of a
+normal Act 1 fight. Measured Slip spend: **0.7 per turn**.
+
+**Fix applied: the player now starts each fight with 3 Slip.** Measured spend
+rose to **1.8–3.1 per turn**, and the Sigma rate rose with it. *Warm Hands*
+(docs/07) now reads +2 on top of that baseline rather than being the only
+source.
+
+### Finding C — fill order starves expensive skills
+
+With a 4-die bag and a loadout of Cleave (2d), Haymaker (2d), Sigma Slam (3d)
+and Brace (1d), a naive left-to-right fill consumes everything before the 3-die
+skill is reached. **Sigma Slam never fired once in 5,000 fights, and the Double
+Sigma rate was a flat 0.0%** — a headline feature with a freeze-frame and a
+screen-crack effect that literally never triggered.
+
+Filling highest-cost-first instead:
+
+| Loadout / bag | Sigma | Double | Omega |
+|---|---|---|---|
+| Damage kit, 4 dice | 28.2% | 21.9% | 0.0% |
+| Damage kit, 6 dice | 29.8% | 26.7% | 0.0% |
+| 3d+4d kit, 5 dice | 8.7% | 19.7% | 5.9% |
+| 3d+4d kit, 6 dice | 9.5% | 17.6% | 10.8% |
+| 3d+4d kit, 8 dice | 7.3% | 15.9% | 19.4% |
+
+This is not a rules bug — it's a real strategic layer, and *assignment priority*
+turns out to be as important as which dice you own. Two consequences:
+
+1. **The UI must not quietly play badly for the player.** Tap-to-slot originally
+   chose the leftmost legal slot, which with the starting loadout dumps every
+   die into Softening (PIP × 0.5, the weakest skill on the bar) — the laziest
+   input was also the worst play, dealing 5 damage across 5 turns. It now scores
+   each slot by its *projected full* value.
+2. **Double Sigma frequency is a function of loadout, not luck.** A 2d-heavy
+   build sees it near-never; a 3d/4d build sees it ~20% of activations. Worth
+   surfacing to the player.
+
+### Finding D — output scales with bag size much faster than §5 assumed ⚠️
+
+The most important result, and the one still needing a decision.
+
+| Loadout | Bag | Damage/turn |
+|---|---|---|
+| 3d+4d kit, **base-power skills, no upgrades** | 5 | **51.8** |
+| 3d+4d kit, base-power skills | 6 | **76.4** |
+| 3d+4d kit, base-power skills | 8 | **119.1** |
+
+§5 projects the **Act 3 boss** at 100–125 damage/turn, assuming 7 dice *and*
+SkillPower 1.8 *and* upgraded dice. The simulator reaches that same output with
+**8 plain d6 and completely un-upgraded Act 1 skills**.
+
+Dice count is doing far more work than the curve assumed — it multiplies with
+itself, because more dice means both more PIP *and* a much higher Sigma tier
+(§1: 9.7% → 70.7% triple rate from 4 → 8 dice). Real run growth is closer to
+**8–12×**, not the 5× in §5.
+
+If left alone, an Act 3 boss at 420 HP dies in roughly two turns.
+
+**Options, in the order I'd try them:**
+1. **Lower the bag cap from 8 to 7.** Cheapest fix, biggest effect, costs the
+   least elsewhere. *Recommended.*
+2. **Raise Act 3 HP by ~1.6×** (boss 420 → 650). Risks sponginess.
+3. **Slow dice acquisition** so a typical run ends at 6–7 dice rather than 8.
+4. Flatten Omega Sigma's `+0.8/die` scaling past 4 matching dice.
+
+I'd take 1 + 3 together and re-measure. This needs a call before Phase 3 sets
+the reward tables — it does not block Phase 2.
+
+### Finding E — Sigma Stone is as strong as feared
+
+| Build | Damage/turn | Double Sigma rate | Turns to kill Mid (elite, 64 HP) |
+|---|---|---|---|
+| 3 × Sigma Stone + damage kit | 51.6 | **50.0%** | 2.0 |
+| 4 × standard d6 + damage kit | 29.4 | 21.9% | 4.0 |
+
+Half of all activations Double Sigma, and the Act 1 elite dies in two turns.
+This confirms the concern flagged in docs/03 — the Stone trivialises early
+combat. Its Act 3 wall (PIP frozen at 15) is real, but the player gets a very
+long free ride first.
+
+**Recommendation:** drop the Stone's face from 5 to 4 and keep it legendary.
+That cuts PIP by 20% and pulls the wall forward into Act 2, where a player still
+has shops and Rest nodes to pivot with.
+
+### Not yet measured
+
+The simulator plays **single fights from full HP**, so every row wins 100% —
+that number means nothing yet. Attrition across an 18-node run, multi-enemy
+encounters, relics, and skill upgrades all arrive in Phase 3, and the run-level
+guardrails in §10 can't be checked until then.

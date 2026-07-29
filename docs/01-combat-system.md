@@ -51,9 +51,14 @@ A flat 1-cost Nudge lets a player manufacture a triple on essentially every turn
 | Source | Amount |
 |---|---|
 | Unspent die at end of turn | 1 each |
-| Fight start | 0 (base) / 2 (with *Warm Hands* relic) |
+| Fight start | **3** (base), +2 more with *Warm Hands* |
 | Manipulation-lane skills | 1–4 per activation |
 | Rolling a `1` on any die | 1 (bad-luck rebate — see below) |
+
+> **Why 3 at fight start, not 0.** The design originally began every fight at
+> zero Slip. Simulation showed basic fights ending in 2–3 turns while Slip
+> income only arrives at *end* of turn — so the pillar mechanic sat dormant
+> through most of a normal Act 1 fight. See [`02-balance-math.md`](02-balance-math.md) §12 Finding B.
 
 ### The bad-luck rebate
 

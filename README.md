@@ -20,7 +20,19 @@ But you'll rarely roll a triple. What you have instead is **SLIP** — a currenc
 
 ## Status
 
-**Pre-production.** Design bible complete, no code yet.
+**Phase 1 built and playable.** The design bible is complete; the combat core
+is implemented and the balance numbers have been validated by simulation.
+
+```bash
+npm install
+npm run dev     # play the Phase 1 feel test
+npm run sim     # run the headless balance probe
+```
+
+The feel test is one screen: your dice tray, four skill slots, one enemy, and
+the full Slip verb set. The panel on the right lets you swap your bag, loadout
+and opponent live — try `3 × Sigma Stone` against `Mid` and watch what
+consistency does to a fight.
 
 ## Documents
 
@@ -67,6 +79,26 @@ But you'll rarely roll a triple. What you have instead is **SLIP** — a currenc
 
 ---
 
+## What Building It Changed
+
+Three rules changed because the simulator disagreed with the design doc:
+
+| Change | Why |
+|---|---|
+| Fight-start Slip **0 → 3** | Fights end in 2–3 turns and Slip income arrives at *end* of turn, so the pillar mechanic was dormant through most of a fight |
+| Tap-to-slot ranks slots **by value**, not left-to-right | Leftmost-first dumped every die into the weakest skill — the laziest input was the worst play |
+| Nudge cost **escalates 1/2/3** | Flat pricing let players manufacture a triple every turn, pushing the natural 9.7% triple rate past 70% |
+
+The hand-derived probability table in [`02-balance-math.md`](docs/02-balance-math.md)
+was checked against 200,000 simulated rolls and every figure landed within 0.1
+percentage points.
+
+One open decision: **damage scales with bag size much faster than the design
+assumed** — eight plain d6 with un-upgraded Act 1 skills already hits the Act 3
+boss output target. See §12 Finding D.
+
 ## Next Step
 
-[Phase 1](docs/09-prototype-roadmap.md#phase-1--the-feel-test-highest-priority) — the feel test. Grey boxes, one enemy, twenty turns. The whole design rests on whether spending Slip on a mediocre roll is interesting, and two days of prototyping answers it.
+Play it for twenty minutes. Everything a simulator can answer has been
+answered; whether spending Slip on a mediocre roll is *fun* is a human
+judgement, and it decides whether Phase 2 is worth building.
