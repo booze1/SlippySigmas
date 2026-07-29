@@ -28,9 +28,12 @@ jobs:
           node-version: 22
           cache: npm
 
-      # Playwright is only used for local UI verification and pulls a large
-      # browser payload, so it is not needed to produce the build.
-      - run: npm ci --omit=optional --ignore-scripts
+      # Plain `npm ci` on purpose. An earlier version passed --omit=optional to
+      # skip Playwright's payload, which also skipped Rollup's platform binary
+      # (@rollup/rollup-linux-x64-gnu is an optionalDependency) and the build
+      # died on MODULE_NOT_FOUND. The env var is the correct, targeted way to
+      # skip the browser download.
+      - run: npm ci
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
