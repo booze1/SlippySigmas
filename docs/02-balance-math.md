@@ -417,3 +417,112 @@ The simulator plays **single fights from full HP**, so every row wins 100% —
 that number means nothing yet. Attrition across an 18-node run, multi-enemy
 encounters, relics, and skill upgrades all arrive in Phase 3, and the run-level
 guardrails in §10 can't be checked until then.
+
+---
+
+## 13 — Phase 2 Simulation (Act 1 complete)
+
+Measured on the full Act 1 content: 34 skills, 22 dice, 10 statuses, 12
+encounters, 3-phase boss. 300 fights per row. `npm run sim`.
+
+### Act 1 difficulty ladder is correctly shaped ✅
+
+Starting kit (Softening / Cleave / Fumble / Brace), 4 dice:
+
+| Encounter | Win | Turns | Guardrail |
+|---|---|---|---|
+| Lone NPC | 100% | 1.5 | ≤4 ✅ |
+| Sigma Slug | 100% | 1.9 | ✅ |
+| Ratio Wraith | 100% | 2.4 | ✅ |
+| Doomscroller + NPC | 100% | 3.4 | ✅ |
+| Touch Grass Golem | 100% | 2.6 | ✅ |
+| The Algorithm (hard) | 98% | 4.6 | ✅ |
+| **3-enemy swarm (hard)** | **71%** | **5.3** | the real spike |
+| ELITE Mid | 100% | 3.8 | 4–5 target ✅ |
+| BOSS Glizzy (5 dice) | 99% | 4.8 | 5–7 target ✅ |
+
+Basic fights clear in 1.5–2.6 turns, hard fights in 3.4–5.3, boss in 4.8. The
+multi-enemy swarm at 71% is the first genuine threat in the act, which is
+exactly where a difficulty spike belongs.
+
+### Finding F — the defensive lane has no win condition ⚠️
+
+| Loadout | Win | Turns | Damage/turn |
+|---|---|---|---|
+| 3 defence + Jab vs Mid | **1%** | 40.9 | **0.2** |
+| 1 defence + 3 damage vs Mid | 100% | 2.2 | 36.7 |
+| 3 defence + Jab vs 3-enemy swarm | 91% | 21.2 | 3.8 |
+
+Two things are happening, and only one is a bug.
+
+**The bug (fixed):** Counterweight retaliated against the *first* attacker each
+turn and its charge was never cleared, so on turns where the enemy chose GUARD
+or STICKY the charge carried over and compounded. That accumulation was quietly
+propping the build up. Counter now hits *every* attacker that turn and clears at
+end of turn — better against groups (swarm went 83% → 91%), honest against one.
+
+**The real finding:** a defence-stacked loadout cannot fit a damage skill. With
+5 dice, Immovable (3d) + Turtle (2d) consume the whole bag before Jab is
+reached, and Mid's 15 Block per turn absorbs the trickle that remains. The
+result is a genuine stalemate — 40 turns, 0.2 damage/turn.
+
+This is arguably *correct*: docs/00 makes manipulation the pillar and Tank a
+supporting flavour, and one defensive pick alongside three damage skills wins
+100% in 2.2 turns. Stacking defence being a trap is a legitimate design
+position. But 1% is bad enough to need a deliberate call:
+
+1. **Accept it.** Defence is support, never a win condition. Cheapest, and
+   consistent with the stated pillar. *Recommended.*
+2. Give the lane a block→damage converter (a "Riposte" skill dealing damage
+   equal to Block held). One new skill, opens a real archetype.
+3. Make Armor scale with Block so attrition eventually closes fights.
+
+### Finding G — the combo lane cannot reach Double Sigma
+
+| Lane (5 dice, vs Mid) | Win | Dmg/turn | Sigma | Double | Omega |
+|---|---|---|---|---|---|
+| Damage | 100% | 36.7 | 36.4% | 27.2% | 0% |
+| Combo | 100% | 23.0 | **90.7%** | **0.0%** | 0% |
+| Manipulation | 100% | 44.6 | 29.2% | **48.8%** | 0% |
+| Tank | 1% | 0.2 | 17.4% | 22.8% | 0% |
+
+Combo skills are all 1d and 2d, so the lane structurally tops out at ×1.6 — it
+Sigmas on 91% of activations but can never touch the ×2.6 tier. That is a
+coherent identity (many small amplified hits rather than one huge one) and the
+lane still wins, so I have left it. Worth knowing it is a design consequence
+rather than a tuning accident.
+
+**Manipulation leads on damage (44.6/turn) and on Double Sigma (48.8%)** — the
+pillar lane is the strongest lane, which is what the design wants.
+
+### Finding H — triple rate misses its guardrail in both directions
+
+§10 targets a 30–40% triple rate. Actual, by loadout:
+
+| Loadout | Double Sigma rate |
+|---|---|
+| Starting kit (2d-heavy) | **0.0%** |
+| Damage kit | 27.2% |
+| Manipulation kit | 48.8% |
+
+The guardrail is not a single number — it is a function of how many 3d and 4d
+skills the loadout carries. A new player on the starting kit never sees a Double
+Sigma at all, which means the freeze-frame and screen-crack effects are content
+they may not encounter in their first several fights.
+
+**Recommendation:** put one 3-dice skill in the starting loadout (swap Fumble
+for Sigma Slam once the player has 5 dice), so the second tier is reachable
+during the tutorial arc rather than after it.
+
+### Finding D still open — bag size still outruns the curve
+
+| Bag (3d+4d kit, base power, vs Mid) | Dmg/turn | Omega rate |
+|---|---|---|
+| 5 dice | 54.3 | 9.2% |
+| 6 dice | 76.6 | 18.1% |
+| 8 dice | 115.2 | **36.2%** |
+
+Unchanged from §12 Finding D and still awaiting a decision. At 8 dice, Omega
+Sigma fires on more than a third of activations — a tier meant to be a rare
+spectacle becomes routine. Bag cap 8 → 7 plus slower dice acquisition remains
+the recommendation, and it now blocks Phase 3's reward tables.

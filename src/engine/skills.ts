@@ -1,18 +1,35 @@
 // Skills: cost validation, PIP maths, and preview computation.
+//
+// previewSlot is the single source of truth for "what will this skill do".
+// Both the UI (live numbers before you commit) and combat resolution read from
+// it, so the number shown and the number dealt cannot drift apart.
 
-import type { Die, Skill, SkillCost, SlotPreview, GameState } from './types.js';
-import { evaluateSigma } from './sigma.js';
-import { crownOf } from './dice.js';
+import {
+  WILD,
+  type Die,
+  type Enemy,
+  type GameState,
+  type Skill,
+  type SkillCost,
+  type SlotPreview,
+  type StatusPreview,
+} from './types.js';
+import { evaluateSigma, pipTotal, effectivePips, SIGMA_MULT } from './sigma.js';
+import { isWild, hasTrait } from './dice.js';
+import { globalMult, incomingMult } from './status.js';
+import { ENEMY_DEFS, nonSigmaResistFor } from './enemy.js';
 import { SKILLS as SKILL_DATA } from '../data/skills.js';
 
 export const SKILLS: Record<string, Skill> = Object.fromEntries(
   SKILL_DATA.map((s) => [s.key, s]),
 );
-
 export const SKILL_LIST: Skill[] = SKILL_DATA;
 
-/** Does this single die satisfy the face requirement of the cost? */
+// ------------------------------------------------------------- costs
+
 export function dieMeetsCost(die: Die, cost: SkillCost): boolean {
+  // A wild face satisfies any face requirement — that is the whole point of it.
+  if (isWild(die)) return true;
   if (cost.exact !== undefined && die.face !== cost.exact) return false;
   if (cost.min !== undefined && die.face < cost.min) return false;
   if (cost.max !== undefined && die.face > cost.max) return false;
@@ -30,133 +47,276 @@ export function costLabel(cost: SkillCost): string {
   return `${n} ANY`;
 }
 
-/**
- * Can this die legally be dropped into this slot right now?
- * Requires: skill present, room left, face requirement met, die not jammed.
- */
-export function canSlot(state: GameState, die: Die, slotIndex: number): boolean {
-  if (die.jammed) return false;
-  if (die.slot === slotIndex) return false;
-  const slot = state.slots[slotIndex];
-  if (!slot?.skillKey) return false;
-  const skill = SKILLS[slot.skillKey];
-  if (!skill) return false;
-  const occupants = diceInSlot(state, slotIndex);
-  if (occupants.length >= skill.cost.count) return false;
-  return dieMeetsCost(die, skill.cost);
-}
-
 export function diceInSlot(state: GameState, slotIndex: number): Die[] {
   return state.dice.filter((d) => d.slot === slotIndex);
 }
 
+export function skillAt(state: GameState, slotIndex: number): Skill | null {
+  const slot = state.slots[slotIndex];
+  if (!slot?.skillKey || slot.spent) return null;
+  return SKILLS[slot.skillKey] ?? null;
+}
+
+export function canSlot(state: GameState, die: Die, slotIndex: number): boolean {
+  if (die.jammed) return false;
+  if (die.slot === slotIndex) return false;
+  const skill = skillAt(state, slotIndex);
+  if (!skill) return false;
+  if (diceInSlot(state, slotIndex).length >= skill.cost.count) return false;
+  return dieMeetsCost(die, skill.cost);
+}
+
+/** Cheap readiness check that does not recurse through previewSlot. */
+export function slotReady(state: GameState, slotIndex: number): boolean {
+  const skill = skillAt(state, slotIndex);
+  if (!skill) return false;
+  return diceInSlot(state, slotIndex).length === skill.cost.count;
+}
+
+// ------------------------------------------------------------- targeting
+
+export function livingEnemies(state: GameState): Enemy[] {
+  return state.enemies.filter((e) => e.hp > 0);
+}
+
+export function currentTarget(state: GameState): Enemy | null {
+  const alive = livingEnemies(state);
+  if (!alive.length) return null;
+  return alive.find((e) => e.id === state.targetId) ?? alive[0];
+}
+
+// ------------------------------------------------------------- preview
+
+function addStatus(list: StatusPreview[], key: string, amount: number): void {
+  if (amount <= 0) return;
+  const found = list.find((s) => s.key === key);
+  if (found) found.amount += amount;
+  else list.push({ key, amount });
+}
+
 /**
- * Full preview for a slot, optionally with a hypothetical extra die.
- * The UI uses the hypothetical form to show live numbers on hover.
+ * Damage for one hit.
+ * FINAL = floor(PIP × Power × Sigma × Global × Brittle × PhaseResist)
  */
+function computeHit(
+  pip: number,
+  power: number,
+  flat: number,
+  mult: number,
+  gMult: number,
+  target: Enemy | null,
+  ignoreResist: boolean,
+): number {
+  const brittle = target ? incomingMult(target) : 1;
+  let resist = 1;
+  if (target && !ignoreResist) {
+    const def = ENEMY_DEFS[target.defKey];
+    if (def) {
+      const r = nonSigmaResistFor(def, target.phase);
+      // Phase resistance only bites when the hit was NOT amplified.
+      if (r < 1 && mult <= 1.0001) resist = r;
+    }
+  }
+  return Math.max(0, Math.floor((pip * power + flat) * mult * gMult * brittle * resist));
+}
+
 export function previewSlot(
   state: GameState,
   slotIndex: number,
   hypothetical?: Die,
 ): SlotPreview {
-  const slot = state.slots[slotIndex];
-  const skill = slot?.skillKey ? SKILLS[slot.skillKey] : null;
-  const dice = diceInSlot(state, slotIndex).slice();
+  const skill = skillAt(state, slotIndex);
+  let dice = diceInSlot(state, slotIndex).slice();
   if (hypothetical && !dice.some((d) => d.id === hypothetical.id)) {
     dice.push(hypothetical);
   }
-
-  const pip = dice.reduce((s, d) => s + d.face, 0);
-  const { tier, mult } = evaluateSigma(dice);
-  const ready = !!skill && dice.length === skill.cost.count;
 
   const out: SlotPreview = {
     slotIndex,
     skill,
     dice,
-    pip,
-    tier,
-    mult,
-    ready,
+    pip: 0,
+    tier: 'NONE',
+    mult: 1,
+    ready: !!skill && dice.length === skill.cost.count,
     damage: 0,
+    hits: 0,
+    aoe: 0,
     block: 0,
+    heal: 0,
     slip: 0,
-    brittle: 0,
-    burn: 0,
+    armor: 0,
+    statuses: [],
+    selfStatuses: [],
+    notes: [],
   };
 
-  if (!skill || !ready) return out;
+  if (!skill) return out;
 
-  const brittleMult = 1 + state.enemy.brittle / 100;
+  // Bend the Odds levels the slotted dice before anything is scored, and that
+  // is fully deterministic — so preview it honestly rather than hiding it.
+  const levels = skill.effects.find((e) => e.type === 'setSlottedToHighest');
+  if (levels && dice.length > 0) {
+    const pips = effectivePips(dice);
+    const top = Math.max(...pips) + (levels.bonus ?? 0);
+    dice = dice.map((d) => ({ ...d, face: top, faces: [top] }));
+    out.notes.push(`levels all dice to ${top}`);
+  }
+
+  out.pip = pipTotal(dice);
+  const sig = evaluateSigma(dice);
+  out.tier = sig.tier;
+  out.mult = sig.mult;
+
+  if (!out.ready) return out;
+
+  const target = currentTarget(state);
+  const gMult = globalMult(state.player);
+  const isSigma = out.tier !== 'NONE';
+
+  // Mark makes the next hit land as at least a SIGMA. It is how defensive and
+  // combo builds reach amplified damage without matching faces.
+  let dmgMult = out.mult;
+  if (target?.mark && dmgMult < SIGMA_MULT.SIGMA) {
+    dmgMult = SIGMA_MULT.SIGMA;
+    out.notes.push('MARK → Sigma');
+  }
+
+  const priorFired = state.slots
+    .slice(0, slotIndex)
+    .some(() => true)
+    ? state.slots.filter((_, j) => j < slotIndex && slotReady(state, j)).length
+    : 0;
 
   for (const eff of skill.effects) {
     switch (eff.type) {
       case 'damage': {
-        // FINAL = floor(PIP × Power + Flat) × Sigma × Global
-        const base = pip * eff.power + (eff.flat ?? 0);
-        out.damage += Math.floor(base * mult * brittleMult);
+        let power = eff.power + state.player.bonusPower;
+        if (eff.condition === 'targetBelowPlayerHp' && eff.altPower !== undefined) {
+          if (target && target.hp < state.player.hp) power = eff.altPower + state.player.bonusPower;
+        }
+        let hits = isSigma ? (eff.sigmaHits ?? eff.hits ?? 1) : (eff.hits ?? 1);
+        if (eff.repeatPerPrior) {
+          const per = isSigma ? (eff.sigmaRepeatPerPrior ?? eff.repeatPerPrior) : eff.repeatPerPrior;
+          hits += per * priorFired;
+        }
+        const per = computeHit(out.pip, power, eff.flat ?? 0, dmgMult, gMult, target, !!eff.ignoreBlock);
+        if (eff.target === 'all') {
+          out.aoe += per * hits;
+        } else {
+          out.damage += per * hits;
+          out.hits += hits;
+        }
+        if (eff.ignoreBlock) out.notes.push('ignores Block');
         break;
       }
       case 'block':
-        out.block += Math.floor(pip * eff.power);
+        out.block += Math.floor(out.pip * eff.power);
+        if (eff.persist) out.notes.push('Block persists');
+        break;
+      case 'heal':
+        out.heal += Math.floor(out.pip * (isSigma ? (eff.sigmaPower ?? eff.power) : eff.power));
+        break;
+      case 'armor':
+        if (!eff.sigmaOnly || isSigma) out.armor += eff.amount;
         break;
       case 'slip':
-        out.slip += tier !== 'NONE' ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
+        out.slip += isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
         break;
-      case 'brittle':
-        out.brittle += tier !== 'NONE' ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
+      case 'slipIfFace': {
+        const has = dice.some((d) => d.face === eff.face);
+        if (isSigma || has) out.slip += eff.amount;
         break;
-      case 'burn':
-        out.burn += Math.floor(pip * (tier !== 'NONE' ? (eff.sigmaPower ?? eff.power) : eff.power));
+      }
+      case 'slipPerFaceInBag': {
+        const n = state.dice.filter((d) => eff.faces.includes(d.face)).length;
+        out.slip += isSigma && eff.doubleOnSigma ? n * 2 : n;
         break;
+      }
+      case 'damagePerSlip': {
+        const power = (isSigma ? (eff.sigmaPower ?? eff.power) : eff.power) * state.player.slip;
+        out.damage += computeHit(out.pip, power, 0, dmgMult, gMult, target, false);
+        out.hits += 1;
+        out.notes.push(isSigma && eff.keepOnSigma ? 'keeps Slip' : 'spends all Slip');
+        break;
+      }
+      case 'status': {
+        const amount = eff.scaleWithPip !== undefined
+          ? Math.floor(out.pip * (isSigma ? (eff.sigmaScaleWithPip ?? eff.scaleWithPip) : eff.scaleWithPip))
+          : (isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount);
+        addStatus(out.statuses, eff.status + (eff.target === 'all' ? ' (all)' : ''), amount);
+        break;
+      }
+      case 'selfStatus':
+        addStatus(out.selfStatuses, eff.status, isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount);
+        break;
+      case 'freeNudge':
+        out.notes.push(`${isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount} free nudges`);
+        break;
+      case 'freeClone':
+        out.notes.push(`${isSigma ? (eff.sigmaTimes ?? eff.times) : eff.times} free clone`);
+        break;
+      case 'rerollBag':
+        out.notes.push(isSigma && eff.freezeHighestOnSigma ? 'reroll bag, freeze best' : 'reroll bag');
+        break;
+      case 'rerollSlotted':
+        out.notes.push('rerolls these dice first');
+        break;
+      case 'setAllBag':
+        out.notes.push(`sets whole bag to ${eff.face}`);
+        break;
+      case 'powerGain':
+        out.notes.push(`+${isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount} power`);
+        break;
+      case 'extraTurnOnKill':
+        out.notes.push('extra turn on kill');
+        break;
+      case 'counter':
+        out.notes.push('counters next attacker');
+        break;
+      case 'immuneJam':
+        out.notes.push('jam immune');
+        break;
+      case 'oncePerFight':
+        out.notes.push('once per fight');
+        break;
+      case 'setSlottedToHighest':
+        break; // already applied above
     }
+  }
+
+  // Burning d6 rides along on any damage skill.
+  const burning = dice.filter((d) => hasTrait(d, 'burning')).reduce((s, d) => s + d.face, 0);
+  if (burning > 0 && (out.damage > 0 || out.aoe > 0)) {
+    addStatus(out.statuses, 'burn', burning);
+    out.notes.push('Burning die');
   }
 
   return out;
 }
 
-/**
- * Could placing this die here still lead to a SIGMA?
- *
- * Not "is it a Sigma right now" — that only becomes true on the *last* die,
- * which is far too late to be useful. The player is deciding where the FIRST
- * die goes, so the gold glow has to answer "is Sigma still reachable from
- * here", checking that matching faces actually remain in the tray rather than
- * promising something the bag can't deliver.
- */
-export function sigmaPotential(state: GameState, die: Die, slotIndex: number): boolean {
-  const skill = SKILLS[state.slots[slotIndex]?.skillKey ?? ''];
-  if (!skill) return false;
-
-  const occupants = diceInSlot(state, slotIndex);
-  if (occupants.some((d) => d.face !== die.face)) return false;
-
-  const need = skill.cost.count - occupants.length - 1;
-  if (need < 0) return false;
-
-  // A lone die only Sigmas at its crown face.
-  if (skill.cost.count === 1) return die.face === crownOf(die);
-
-  const matchesLeft = state.dice.filter(
-    (d) => d.id !== die.id && d.slot === null && !d.jammed && d.face === die.face && dieMeetsCost(d, skill.cost),
-  ).length;
-  return matchesLeft >= need;
-}
-
-/**
- * Rough single number for "how good is this slot right now", used to rank
- * candidate slots for tap-to-slot. Damage dominates; block, Slip and debuffs
- * are worth a fraction each so defensive skills aren't invisible.
- */
+/** Rough "how good is this slot" number, used to rank tap-to-slot candidates. */
 export function slotValue(p: SlotPreview): number {
-  return p.damage + p.block * 0.6 + p.slip * 2 + p.brittle * 0.3 + p.burn * 0.8;
+  const statusValue = p.statuses.reduce((s, x) => s + x.amount * 0.35, 0);
+  return (
+    p.damage +
+    p.aoe * 1.2 +
+    p.block * 0.6 +
+    p.heal * 0.8 +
+    p.slip * 2 +
+    p.armor * 3 +
+    statusValue +
+    p.selfStatuses.reduce((s, x) => s + x.amount * 2, 0)
+  );
 }
 
-/** Total damage the player would deal this turn if they resolved now. */
 export function previewTurnDamage(state: GameState): number {
   let total = 0;
   for (let i = 0; i < state.slots.length; i++) {
-    total += previewSlot(state, i).damage;
+    const p = previewSlot(state, i);
+    total += p.damage + p.aoe;
   }
   return total;
 }
+
+export { WILD };

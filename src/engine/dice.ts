@@ -1,6 +1,6 @@
-// Dice: definitions, rolling, and face queries.
+// Dice: definitions, rolling, faces, and trait queries.
 
-import type { Die, DieDef } from './types.js';
+import { WILD, type Die, type DieDef, type DieTrait } from './types.js';
 import type { Rng } from './rng.js';
 import { DICE } from '../data/dice.js';
 
@@ -15,16 +15,40 @@ export function facesOf(die: Die): number[] {
   return DICE_DEFS[die.defKey]?.faces ?? [1, 2, 3, 4, 5, 6];
 }
 
+export function defOf(die: Die): DieDef | undefined {
+  return DICE_DEFS[die.defKey];
+}
+
+export function traitOf(die: Die): DieTrait | undefined {
+  return die.temp ? undefined : DICE_DEFS[die.defKey]?.trait;
+}
+
+export function hasTrait(die: Die, trait: DieTrait): boolean {
+  return traitOf(die) === trait;
+}
+
+export function isWild(die: Die): boolean {
+  return die.face === WILD;
+}
+
+/** Highest face this die can show. WILD is excluded — it has no fixed value. */
 export function crownOf(die: Die): number {
-  return Math.max(...facesOf(die));
+  const real = facesOf(die).filter((f) => f !== WILD);
+  return real.length ? Math.max(...real) : 6;
 }
 
 export function floorOf(die: Die): number {
-  return Math.min(...facesOf(die));
+  const real = facesOf(die).filter((f) => f !== WILD);
+  return real.length ? Math.min(...real) : 1;
 }
 
-export function defOf(die: Die): DieDef | undefined {
-  return DICE_DEFS[die.defKey];
+/** Face as it counts for arithmetic. WILD is resolved by the caller. */
+export function pipOf(die: Die): number {
+  return isWild(die) ? 0 : die.face;
+}
+
+export function faceLabel(die: Die): string {
+  return isWild(die) ? 'W' : String(die.face);
 }
 
 let dieCounter = 0;
@@ -43,10 +67,10 @@ export function makeDie(defKey: string, rng: Rng): Die {
   };
 }
 
-export function makeTempDie(face: number): Die {
+export function makeTempDie(face: number, from?: Die): Die {
   return {
     id: `t${dieCounter++}`,
-    defKey: 'standard_d6',
+    defKey: from?.defKey ?? 'standard_d6',
     face,
     nudges: 0,
     frozen: false,
@@ -61,7 +85,7 @@ export function rollDie(die: Die, rng: Rng): void {
   die.face = rng.pick(facesOf(die));
 }
 
-/** Reset the counter so seeded runs produce identical die ids. */
+/** Reset so seeded runs produce identical die ids. */
 export function resetDieCounter(): void {
   dieCounter = 0;
 }

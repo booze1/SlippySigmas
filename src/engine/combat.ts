@@ -1,18 +1,43 @@
-// The rules engine. Every exported function takes a state and returns a NEW
+// The rules engine. Every exported action takes a state and returns a NEW
 // state — no in-place mutation of the caller's object. That gives undo,
 // save/resume, deterministic replay, and headless simulation for free.
 
-import type { Die, GameState, LogEntry, SigmaTier } from './types.js';
+import type {
+  Die,
+  Enemy,
+  GameState,
+  LogEntry,
+  SigmaTier,
+  SkillEffect,
+} from './types.js';
 import { Rng } from './rng.js';
-import { makeDie, makeTempDie, rollDie, facesOf, crownOf, floorOf, resetDieCounter } from './dice.js';
-import { SKILLS, previewSlot, diceInSlot, canSlot, slotValue } from './skills.js';
-import { makeEnemy, pickIntent, ENEMY_DEFS } from './enemy.js';
-import { nudgeCost, FLAT_COSTS } from './slip.js';
-import { tierLabel } from './sigma.js';
+import {
+  makeDie, makeTempDie, rollDie, facesOf, crownOf, floorOf, isWild,
+  hasTrait, resetDieCounter, DICE_DEFS,
+} from './dice.js';
+import {
+  SKILLS, previewSlot, diceInSlot, canSlot, slotValue, skillAt,
+  livingEnemies, currentTarget,
+} from './skills.js';
+import {
+  makeEnemy, pickIntent, rollGamble, intentDamage, phaseIndexFor,
+  ENEMY_DEFS, ENCOUNTER_DEFS, resetEnemyCounter,
+} from './enemy.js';
+import { nudgeCost, FLAT_COSTS, type SlipVerb } from './slip.js';
+import { decayEnemy, decayPlayer, outgoingMult } from './status.js';
+import { tierLabel, TIER_RANK, SIGMA_MULT } from './sigma.js';
 
 export const SLOT_COUNT = 4;
 export const DEFAULT_LOADOUT = ['softening', 'cleave', 'fumble', 'brace'];
 export const DEFAULT_BAG = ['standard_d6', 'standard_d6', 'standard_d6', 'standard_d6'];
+export const BAG_CAP = 8;
+
+/**
+ * Slip carried into turn 1. Was 0 in the first design pass; simulation showed
+ * fights end in 2-3 turns while Slip income only arrives at END of turn, so the
+ * pillar mechanic was dormant. See docs/02-balance-math.md §12 Finding B.
+ */
+export const START_SLIP = 3;
 
 function clone(state: GameState): GameState {
   return structuredClone(state);
@@ -20,38 +45,37 @@ function clone(state: GameState): GameState {
 
 function log(s: GameState, kind: LogEntry['kind'], text: string): void {
   s.log.push({ turn: s.turn, text, kind });
-  if (s.log.length > 120) s.log.shift();
+  if (s.log.length > 200) s.log.shift();
 }
 
-// ------------------------------------------------------------- setup
+// ================================================================= setup
 
 export interface NewGameOpts {
   seed?: number;
   bag?: string[];
   loadout?: (string | null)[];
-  enemyKey?: string;
+  encounterKey?: string;
   maxHp?: number;
   startSlip?: number;
 }
-
-/**
- * Slip the player carries into turn 1.
- *
- * This was 0 in the first design pass. The simulator showed that basic fights
- * end in 2-3 turns and Slip income only arrives at END of turn, so a player
- * starting at 0 never had Slip to spend during a normal fight — the pillar
- * mechanic was inactive for most of Act 1. See docs/02-balance-math.md §3.
- */
-export const START_SLIP = 3;
 
 export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } {
   const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 31);
   const rng = new Rng(seed);
   resetDieCounter();
+  resetEnemyCounter();
 
   const maxHp = opts.maxHp ?? 60;
-  const bag = opts.bag ?? DEFAULT_BAG;
+  const bag = (opts.bag ?? DEFAULT_BAG).slice(0, BAG_CAP);
   const loadout = opts.loadout ?? DEFAULT_LOADOUT;
+  const encounterKey = opts.encounterKey ?? 'a1_wraith';
+  const encounter = ENCOUNTER_DEFS[encounterKey];
+  if (!encounter) throw new Error(`Unknown encounter: ${encounterKey}`);
+
+  const dice = bag.map((k) => makeDie(k, rng));
+  // The Slip raises the cap just by being in the bag.
+  const slipCap = 10 + dice.filter((d) => hasTrait(d, 'theslip')).length * 5;
+  const enemies = encounter.enemies.map((k) => makeEnemy(k, rng));
 
   const state: GameState = {
     seed,
@@ -61,15 +85,27 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
       hp: maxHp,
       maxHp,
       block: 0,
+      blockPersists: false,
+      armor: 0,
       slip: opts.startSlip ?? START_SLIP,
-      slipCap: 10,
+      slipCap,
+      gold: 0,
+      hyped: 0,
+      slick: 0,
+      cursed: 0,
+      sticky: false,
+      jamImmuneTurns: 0,
       incomingJam: 0,
+      freeNudges: 0,
+      freeClones: 0,
+      bonusPower: 0,
+      counter: 0,
     },
-    dice: bag.map((k) => makeDie(k, rng)),
-    slots: Array.from({ length: SLOT_COUNT }, (_, i) => ({
-      skillKey: loadout[i] ?? null,
-    })),
-    enemy: makeEnemy(opts.enemyKey ?? 'ratio_wraith', rng),
+    dice,
+    slots: Array.from({ length: SLOT_COUNT }, (_, i) => ({ skillKey: loadout[i] ?? null })),
+    enemies,
+    targetId: enemies[0]?.id ?? null,
+    encounterKey,
     log: [],
     stats: {
       turns: 0,
@@ -80,54 +116,88 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
       biggestHit: 0,
       sigmaCounts: { NONE: 0, SIGMA: 0, DOUBLE: 0, OMEGA: 0 },
     },
+    extraTurn: false,
   };
 
   startTurn(state, rng);
   return { state, rng };
 }
 
-// ------------------------------------------------------------- turn start
+// ============================================================ turn start
 
-/** Mutates in place — only ever called on a state we already own. */
 function startTurn(s: GameState, rng: Rng): void {
   s.turn += 1;
   s.stats.turns = s.turn;
+  s.extraTurn = false;
+  s.player.freeNudges = 0;
+  s.player.freeClones = 0;
 
-  // Temp dice from SPLIT evaporate.
+  // Temp dice (SPLIT, Echo) evaporate.
   s.dice = s.dice.filter((d) => !d.temp);
 
   for (const die of s.dice) {
     die.slot = null;
     die.nudges = 0;
     die.jammed = false;
+    die.usedFreeNudge = false;
+    die.echoed = false;
     if (die.frozen) {
       die.frozen = false; // kept its face through this roll, now thaws
     } else {
       rollDie(die, rng);
+      // Cracked d6 gets two swings at turn 1 and keeps the better one.
+      if (s.turn === 1 && hasTrait(die, 'cracked')) {
+        const first = die.face;
+        rollDie(die, rng);
+        if (first > die.face) die.face = first;
+      }
     }
   }
 
-  // LOCK intents jam random dice for exactly one turn.
-  if (s.player.incomingJam > 0) {
-    const free = rng.shuffle(s.dice.map((d) => d.id));
-    for (const id of free.slice(0, s.player.incomingJam)) {
-      const die = s.dice.find((d) => d.id === id);
-      if (die) die.jammed = true;
+  // Mirror copies its left-hand neighbour, so it resolves after everyone rolls.
+  for (let i = 0; i < s.dice.length; i++) {
+    const die = s.dice[i];
+    if (hasTrait(die, 'mirror') && i > 0 && !die.frozen) {
+      const left = s.dice[i - 1];
+      if (facesOf(die).includes(left.face)) die.face = left.face;
     }
-    log(s, 'enemy', `${s.player.incomingJam} dice jammed.`);
+  }
+
+  // Cursed halves the faces of N dice.
+  if (s.player.cursed > 0) {
+    const victims = rng.shuffle(s.dice.filter((d) => !isWild(d))).slice(0, s.player.cursed);
+    for (const die of victims) die.face = Math.ceil(die.face / 2);
+    if (victims.length) log(s, 'enemy', `Cursed: ${victims.length} dice halved.`);
+  }
+
+  // LOCK jams random dice for exactly one turn.
+  if (s.player.incomingJam > 0) {
+    if (s.player.jamImmuneTurns > 0) {
+      log(s, 'player', 'Non-Stick — jam ignored.');
+    } else {
+      for (const id of rng.shuffle(s.dice.map((d) => d.id)).slice(0, s.player.incomingJam)) {
+        const die = s.dice.find((d) => d.id === id);
+        if (die) die.jammed = true;
+      }
+      log(s, 'enemy', `${s.player.incomingJam} dice jammed.`);
+    }
     s.player.incomingJam = 0;
   }
 
-  // Bad-luck rebate: every 1 rolled pays a Slip. See docs/01 §2.
+  // Bad-luck rebate, Cursed d6 bite, Greedy payout.
   let ones = 0;
   for (const die of s.dice) {
     if (die.face === 1) {
       ones += 1;
-      if (die.defKey === 'cursed_d6') {
+      if (hasTrait(die, 'cursed')) {
         s.player.hp -= 3;
         s.stats.damageTaken += 3;
         log(s, 'enemy', 'Cursed d6 bites you for 3.');
       }
+    }
+    if (hasTrait(die, 'greedy') && die.face === crownOf(die)) {
+      s.player.gold += 4;
+      log(s, 'slip', 'Greedy d6 pays 4 gold.');
     }
   }
   if (ones > 0) {
@@ -144,14 +214,7 @@ function gainSlip(s: GameState, n: number): void {
   s.stats.slipGained += s.player.slip - before;
 }
 
-function spendSlip(s: GameState, n: number): boolean {
-  if (s.player.slip < n) return false;
-  s.player.slip -= n;
-  s.stats.slipSpent += n;
-  return true;
-}
-
-// ------------------------------------------------------------- slotting
+// ============================================================== slotting
 
 export function slotDie(state: GameState, dieId: string, slotIndex: number): GameState {
   if (state.phase !== 'PLAN') return state;
@@ -161,15 +224,22 @@ export function slotDie(state: GameState, dieId: string, slotIndex: number): Gam
   const s = clone(state);
   const die = s.dice.find((d) => d.id === dieId)!;
   die.slot = slotIndex;
+
+  // Echo leaves a one-use copy behind rather than being consumed outright.
+  if (hasTrait(die, 'echo') && !die.echoed) {
+    die.echoed = true;
+    s.dice.push(makeTempDie(die.face, die));
+    log(s, 'slip', 'Echo d6 leaves a copy behind.');
+  }
   return s;
 }
 
 export function unslotDie(state: GameState, dieId: string): GameState {
   if (state.phase !== 'PLAN') return state;
-  const s = clone(state);
-  const die = s.dice.find((d) => d.id === dieId);
+  const die = state.dice.find((d) => d.id === dieId);
   if (!die || die.slot === null) return state;
-  die.slot = null;
+  const s = clone(state);
+  s.dice.find((d) => d.id === dieId)!.slot = null;
   return s;
 }
 
@@ -181,12 +251,8 @@ export function clearSlots(state: GameState): GameState {
 
 /**
  * Tap-to-slot: drop into the slot where this die is worth the most.
- *
- * This used to pick the leftmost legal slot. Driving the real UI showed why
- * that is a trap — with the starting loadout, leftmost-legal dumps every die
- * into Softening (PIP × 0.5, the weakest skill on the bar) instead of Cleave,
- * so the laziest input is also the worst play. Ranking by value makes the
- * fast path a reasonable path; drag is still there for full control.
+ * Leftmost-legal made the laziest input the worst play — with the starting
+ * loadout it dumped every die into Softening (PIP × 0.5).
  */
 export function autoSlot(state: GameState, dieId: string): GameState {
   const die = state.dice.find((d) => d.id === dieId);
@@ -207,24 +273,17 @@ export function autoSlot(state: GameState, dieId: string): GameState {
 
 /**
  * What this slot is worth if the die goes in AND the slot eventually fills.
- *
- * Scoring the slot as-is heavily biases 1-die skills, because a 2-die skill
- * with one die in it previews as zero — the first UI pass fed everything into
- * Fumble and dealt 5 damage in 5 turns. Projecting the remaining sockets as
- * copies of this die values multi-die skills fairly and leans toward matching,
- * which is the behaviour we want to encourage anyway.
- *
- * Returns -Infinity when there aren't enough legal dice left to finish the slot.
+ * Scoring it as-is biases 1-die skills, because a 2-die skill holding one die
+ * previews as zero. Returns -Infinity when the slot cannot be completed.
  */
 function projectedSlotValue(state: GameState, slotIndex: number, die: Die): number {
-  const skill = SKILLS[state.slots[slotIndex]?.skillKey ?? ''];
+  const skill = skillAt(state, slotIndex);
   if (!skill) return -Infinity;
 
   const filled = diceInSlot(state, slotIndex).length;
   const need = skill.cost.count - filled - 1;
   if (need < 0) return -Infinity;
 
-  // Don't commit to a slot that cannot be completed this turn.
   const spare = state.dice.filter(
     (d) => d.id !== die.id && d.slot === null && canSlot(state, d, slotIndex),
   ).length;
@@ -239,65 +298,106 @@ function projectedSlotValue(state: GameState, slotIndex: number, die: Die): numb
   return slotValue(previewSlot(probe, slotIndex));
 }
 
-export function setSlotSkill(
-  state: GameState,
-  slotIndex: number,
-  skillKey: string | null,
-): GameState {
+export function setSlotSkill(state: GameState, slotIndex: number, skillKey: string | null): GameState {
   const s = clone(state);
   s.slots[slotIndex] = { skillKey };
-  // Any dice already committed to that slot are returned to the tray.
   for (const d of s.dice) if (d.slot === slotIndex) d.slot = null;
   return s;
 }
 
-// ------------------------------------------------------------- slip verbs
+export function setTarget(state: GameState, enemyId: string): GameState {
+  const enemy = state.enemies.find((e) => e.id === enemyId);
+  if (!enemy || enemy.hp <= 0) return state;
+  const s = clone(state);
+  s.targetId = enemyId;
+  return s;
+}
+
+// ============================================================ slip verbs
+
+/**
+ * Pay for a Slip verb. Free sources are consumed before real Slip: the Slick
+ * d6's per-turn freebie, Greased Palms' free nudges, then Slick status.
+ */
+function payFor(s: GameState, verb: SlipVerb, cost: number, die?: Die): boolean {
+  if (verb === 'NUDGE' && die && hasTrait(die, 'slick') && !die.usedFreeNudge) {
+    die.usedFreeNudge = true;
+    return true;
+  }
+  if (verb === 'NUDGE' && s.player.freeNudges > 0) {
+    s.player.freeNudges -= 1;
+    return true;
+  }
+  if (verb === 'CLONE' && s.player.freeClones > 0) {
+    s.player.freeClones -= 1;
+    return true;
+  }
+  if (verb === 'SET' && die && hasTrait(die, 'theslip') && !die.usedFreeSet) {
+    die.usedFreeSet = true;
+    return true;
+  }
+  if (s.player.slick > 0) {
+    s.player.slick -= 1;
+    return true;
+  }
+  if (s.player.slip < cost) return false;
+  s.player.slip -= cost;
+  s.stats.slipSpent += cost;
+  return true;
+}
+
+/** Can the player afford this verb right now, counting all free sources? */
+export function canAfford(state: GameState, verb: SlipVerb, die?: Die): boolean {
+  if (verb === 'NUDGE' && die && hasTrait(die, 'slick') && !die.usedFreeNudge) return true;
+  if (verb === 'NUDGE' && state.player.freeNudges > 0) return true;
+  if (verb === 'CLONE' && state.player.freeClones > 0) return true;
+  if (verb === 'SET' && die && hasTrait(die, 'theslip') && !die.usedFreeSet) return true;
+  if (state.player.slick > 0) return true;
+  const cost = verb === 'NUDGE' ? (die ? nudgeCost(die) : 1) : FLAT_COSTS[verb];
+  return state.player.slip >= cost;
+}
 
 export function nudge(state: GameState, dieId: string, delta: 1 | -1): GameState {
   if (state.phase !== 'PLAN') return state;
   const probe = state.dice.find((d) => d.id === dieId);
-  if (!probe || probe.jammed || probe.temp) return state;
-
-  const faces = facesOf(probe);
+  if (!probe || probe.jammed || probe.temp || isWild(probe)) return state;
   const target = probe.face + delta;
-  if (target < Math.min(...faces) || target > Math.max(...faces)) return state;
-
-  const cost = nudgeCost(probe);
-  if (state.player.slip < cost) return state;
+  if (target < floorOf(probe) || target > crownOf(probe)) return state;
+  if (!canAfford(state, 'NUDGE', probe)) return state;
 
   const s = clone(state);
   const die = s.dice.find((d) => d.id === dieId)!;
-  spendSlip(s, cost);
+  const cost = nudgeCost(die);
+  if (!payFor(s, 'NUDGE', cost, die)) return state;
   die.face = target;
   die.nudges += 1;
-  log(s, 'slip', `Nudge ${die.face - delta} → ${die.face} (−${cost} Slip).`);
+  log(s, 'slip', `Nudge → ${die.face}.`);
   return validateSlots(s);
 }
 
 export function reroll(state: GameState, dieId: string, rng: Rng): GameState {
   if (state.phase !== 'PLAN') return state;
   const probe = state.dice.find((d) => d.id === dieId);
-  if (!probe || probe.jammed || state.player.slip < FLAT_COSTS.REROLL) return state;
+  if (!probe || probe.jammed || !canAfford(state, 'REROLL')) return state;
 
   const s = clone(state);
   const die = s.dice.find((d) => d.id === dieId)!;
-  spendSlip(s, FLAT_COSTS.REROLL);
-  const before = die.face;
+  if (!payFor(s, 'REROLL', FLAT_COSTS.REROLL)) return state;
   rollDie(die, rng);
-  log(s, 'slip', `Reroll ${before} → ${die.face} (−${FLAT_COSTS.REROLL} Slip).`);
+  log(s, 'slip', `Reroll → ${isWild(die) ? 'WILD' : die.face}.`);
   return validateSlots(s);
 }
 
 export function freeze(state: GameState, dieId: string): GameState {
   if (state.phase !== 'PLAN') return state;
   const probe = state.dice.find((d) => d.id === dieId);
-  if (!probe || probe.frozen || probe.temp || state.player.slip < FLAT_COSTS.FREEZE) return state;
+  if (!probe || probe.frozen || probe.temp || !canAfford(state, 'FREEZE')) return state;
 
   const s = clone(state);
   const die = s.dice.find((d) => d.id === dieId)!;
-  spendSlip(s, FLAT_COSTS.FREEZE);
+  if (!payFor(s, 'FREEZE', FLAT_COSTS.FREEZE)) return state;
   die.frozen = true;
-  log(s, 'slip', `Froze a ${die.face} (−${FLAT_COSTS.FREEZE} Slip).`);
+  log(s, 'slip', `Froze a ${die.face}.`);
   return s;
 }
 
@@ -306,109 +406,190 @@ export function cloneFace(state: GameState, fromId: string, toId: string): GameS
   if (fromId === toId) return state;
   const from = state.dice.find((d) => d.id === fromId);
   const to = state.dice.find((d) => d.id === toId);
-  if (!from || !to || to.jammed || state.player.slip < FLAT_COSTS.CLONE) return state;
-  // The target must physically be able to show that face.
+  if (!from || !to || to.jammed || isWild(from)) return state;
   if (!facesOf(to).includes(from.face)) return state;
+  if (!canAfford(state, 'CLONE')) return state;
 
   const s = clone(state);
   const target = s.dice.find((d) => d.id === toId)!;
-  spendSlip(s, FLAT_COSTS.CLONE);
-  const before = target.face;
+  if (!payFor(s, 'CLONE', FLAT_COSTS.CLONE)) return state;
   target.face = from.face;
-  log(s, 'slip', `Cloned ${from.face} onto a ${before} (−${FLAT_COSTS.CLONE} Slip).`);
+  log(s, 'slip', `Cloned a ${from.face}.`);
   return validateSlots(s);
 }
 
 export function setFace(state: GameState, dieId: string, face: number): GameState {
   if (state.phase !== 'PLAN') return state;
   const probe = state.dice.find((d) => d.id === dieId);
-  if (!probe || probe.jammed || state.player.slip < FLAT_COSTS.SET) return state;
-  if (!facesOf(probe).includes(face)) return state;
+  if (!probe || probe.jammed || !facesOf(probe).includes(face)) return state;
+  if (!canAfford(state, 'SET', probe)) return state;
 
   const s = clone(state);
   const die = s.dice.find((d) => d.id === dieId)!;
-  spendSlip(s, FLAT_COSTS.SET);
-  const before = die.face;
+  if (!payFor(s, 'SET', FLAT_COSTS.SET, die)) return state;
   die.face = face;
-  log(s, 'slip', `Set ${before} → ${face} (−${FLAT_COSTS.SET} Slip).`);
+  log(s, 'slip', `Set to ${face === -1 ? 'WILD' : face}.`);
   return validateSlots(s);
 }
 
 export function split(state: GameState, dieId: string): GameState {
   if (state.phase !== 'PLAN') return state;
   const probe = state.dice.find((d) => d.id === dieId);
-  if (!probe || probe.jammed || probe.face < 4 || state.player.slip < FLAT_COSTS.SPLIT) {
-    return state;
-  }
+  if (!probe || probe.jammed || probe.face < 4 || !canAfford(state, 'SPLIT')) return state;
 
   const s = clone(state);
   const idx = s.dice.findIndex((d) => d.id === dieId);
   const die = s.dice[idx];
-  spendSlip(s, FLAT_COSTS.SPLIT);
+  if (!payFor(s, 'SPLIT', FLAT_COSTS.SPLIT)) return state;
   const a = Math.floor(die.face / 2);
   const b = die.face - a;
-  s.dice.splice(idx, 1, makeTempDie(a), makeTempDie(b));
-  log(s, 'slip', `Split ${die.face} → ${a} + ${b} (−${FLAT_COSTS.SPLIT} Slip).`);
+  s.dice.splice(idx, 1, makeTempDie(a, die), makeTempDie(b, die));
+  log(s, 'slip', `Split ${die.face} → ${a} + ${b}.`);
   return s;
 }
 
-/**
- * After any face change, dice may no longer satisfy the slot they sit in.
- * Eject the illegal ones rather than silently letting a skill fire on a
- * requirement it no longer meets.
- */
+/** After a face change, eject dice that no longer satisfy their slot. */
 function validateSlots(s: GameState): GameState {
   for (const die of s.dice) {
     if (die.slot === null) continue;
-    const skill = SKILLS[s.slots[die.slot]?.skillKey ?? ''];
+    const skill = skillAt(s, die.slot);
     if (!skill) {
       die.slot = null;
       continue;
     }
+    const c = skill.cost;
     const ok =
-      (skill.cost.exact === undefined || die.face === skill.cost.exact) &&
-      (skill.cost.min === undefined || die.face >= skill.cost.min) &&
-      (skill.cost.max === undefined || die.face <= skill.cost.max) &&
-      (skill.cost.parity !== 'EVEN' || die.face % 2 === 0) &&
-      (skill.cost.parity !== 'ODD' || die.face % 2 === 1);
+      isWild(die) ||
+      ((c.exact === undefined || die.face === c.exact) &&
+        (c.min === undefined || die.face >= c.min) &&
+        (c.max === undefined || die.face <= c.max) &&
+        (c.parity !== 'EVEN' || die.face % 2 === 0) &&
+        (c.parity !== 'ODD' || die.face % 2 === 1));
     if (!ok) die.slot = null;
   }
   return s;
 }
 
-// ------------------------------------------------------------- resolve
+// ================================================================ damage
 
-function dealToEnemy(s: GameState, amount: number): void {
-  if (amount <= 0) return;
-  const absorbed = Math.min(s.enemy.block, amount);
-  s.enemy.block -= absorbed;
-  const through = amount - absorbed;
-  s.enemy.hp -= through;
-  s.stats.damageDealt += through;
+function dealToEnemy(
+  s: GameState,
+  enemy: Enemy,
+  amount: number,
+  opts: { ignoreBlock?: boolean; isHit?: boolean } = {},
+): void {
+  if (amount <= 0 || enemy.hp <= 0) return;
+  let remaining = amount;
+  if (!opts.ignoreBlock) {
+    const absorbed = Math.min(enemy.block, remaining);
+    enemy.block -= absorbed;
+    remaining -= absorbed;
+  }
+  enemy.hp -= remaining;
+  s.stats.damageDealt += remaining;
   if (amount > s.stats.biggestHit) s.stats.biggestHit = amount;
+
+  // Bleed triggers per hit, which is what makes Death by 1000 a Bleed engine.
+  if (opts.isHit !== false && enemy.bleed > 0 && enemy.hp > 0) {
+    enemy.hp -= enemy.bleed;
+    s.stats.damageDealt += enemy.bleed;
+  }
+
+  const def = ENEMY_DEFS[enemy.defKey];
+  if (def) {
+    const next = phaseIndexFor(def, enemy.hp, enemy.maxHp);
+    if (next !== enemy.phase) {
+      enemy.phase = next;
+      log(s, 'system', `${enemy.name} — ${def.phases?.[next]?.note ?? `phase ${next + 1}`}.`);
+    }
+  }
 }
 
-function dealToPlayer(s: GameState, amount: number): void {
+function dealToPlayer(s: GameState, amount: number, attacker?: Enemy): void {
   if (amount <= 0) return;
-  const absorbed = Math.min(s.player.block, amount);
+  let remaining = amount;
+  const absorbed = Math.min(s.player.block, remaining);
   s.player.block -= absorbed;
-  const through = amount - absorbed;
-  s.player.hp -= through;
-  s.stats.damageTaken += through;
+  remaining -= absorbed;
+  remaining = Math.max(0, remaining - s.player.armor);
+  s.player.hp -= remaining;
+  s.stats.damageTaken += remaining;
+
+  if (s.player.counter > 0 && attacker) {
+    dealToEnemy(s, attacker, s.player.counter, { isHit: false });
+    log(s, 'player', `Counterweight hits back for ${s.player.counter}.`);
+  }
 }
+
+// =============================================================== resolve
 
 export interface ResolveEvent {
   slotIndex: number;
   skillName: string;
   tier: SigmaTier;
   damage: number;
-  block: number;
-  slip: number;
 }
 
 export interface ResolveResult {
   state: GameState;
   events: ResolveEvent[];
+}
+
+/** Effects that mutate the bag and must run before the slot is scored. */
+function applyPreEffects(s: GameState, slotIndex: number, effects: SkillEffect[], rng: Rng): void {
+  for (const eff of effects) {
+    if (eff.type === 'rerollSlotted') {
+      for (const die of s.dice.filter((d) => d.slot === slotIndex)) rollDie(die, rng);
+    }
+    if (eff.type === 'setSlottedToHighest') {
+      const slotted = s.dice.filter((d) => d.slot === slotIndex);
+      if (slotted.length) {
+        const top = Math.max(...slotted.map((d) => d.face)) + (eff.bonus ?? 0);
+        for (const die of slotted) {
+          die.face = top;
+          die.faces = [top];
+        }
+      }
+    }
+  }
+}
+
+function applyPostEffects(s: GameState, effects: SkillEffect[], isSigma: boolean, rng: Rng): void {
+  for (const eff of effects) {
+    switch (eff.type) {
+      case 'rerollBag': {
+        for (const die of s.dice.filter((d) => d.slot === null && !d.frozen)) rollDie(die, rng);
+        if (isSigma && eff.freezeHighestOnSigma) {
+          const loose = s.dice.filter((d) => d.slot === null);
+          const best = loose.sort((a, b) => b.face - a.face)[0];
+          if (best) best.frozen = true;
+        }
+        break;
+      }
+      case 'setAllBag':
+        for (const die of s.dice) {
+          if (facesOf(die).includes(eff.face)) die.face = eff.face;
+        }
+        break;
+      case 'freeNudge':
+        s.player.freeNudges += isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
+        break;
+      case 'freeClone':
+        s.player.freeClones += isSigma ? (eff.sigmaTimes ?? eff.times) : eff.times;
+        break;
+      case 'powerGain':
+        s.player.bonusPower += isSigma ? (eff.sigmaAmount ?? eff.amount) : eff.amount;
+        break;
+      case 'immuneJam':
+        s.player.jamImmuneTurns = Math.max(
+          s.player.jamImmuneTurns,
+          isSigma ? (eff.sigmaTurns ?? eff.turns) : eff.turns,
+        );
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
@@ -417,105 +598,223 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
   const s = clone(state);
   const events: ResolveEvent[] = [];
 
-  // --- player skills, left to right
+  // ---------------------------------------------------- player skills
   for (let i = 0; i < s.slots.length; i++) {
-    const p = previewSlot(s, i);
-    if (!p.ready || !p.skill) continue;
+    const skill = skillAt(s, i);
+    if (!skill) continue;
+    if (diceInSlot(s, i).length !== skill.cost.count) continue;
 
+    applyPreEffects(s, i, skill.effects, rng);
+
+    const p = previewSlot(s, i);
+    if (!p.ready) continue;
+
+    const isSigma = p.tier !== 'NONE';
     s.stats.sigmaCounts[p.tier] += 1;
 
-    if (p.damage > 0) dealToEnemy(s, p.damage);
-    if (p.block > 0) s.player.block += p.block;
-    if (p.slip > 0) gainSlip(s, p.slip);
-    if (p.brittle > 0) s.enemy.brittle += p.brittle;
-    if (p.burn > 0) s.enemy.burn += p.burn;
+    const target = currentTarget(s);
+    const alive = livingEnemies(s);
 
-    const tl = tierLabel(p.tier);
+    if (p.damage > 0 && target) {
+      const perHit = Math.round(p.damage / Math.max(1, p.hits));
+      for (let h = 0; h < Math.max(1, p.hits); h++) {
+        dealToEnemy(s, target, perHit, {
+          ignoreBlock: skill.effects.some((e) => e.type === 'damage' && e.ignoreBlock),
+        });
+      }
+      if (target.mark) target.mark = false;
+    }
+    if (p.aoe > 0) {
+      for (const e of alive) dealToEnemy(s, e, p.aoe);
+    }
+    if (p.block > 0) {
+      s.player.block += p.block;
+      if (skill.effects.some((e) => e.type === 'block' && e.persist)) s.player.blockPersists = true;
+    }
+    if (p.heal > 0) s.player.hp = Math.min(s.player.maxHp, s.player.hp + p.heal);
+    if (p.armor > 0) s.player.armor = Math.min(6, s.player.armor + p.armor);
+    if (p.slip > 0) gainSlip(s, p.slip);
+
+    // Statuses onto enemies.
+    for (const st of p.statuses) {
+      const all = st.key.endsWith('(all)');
+      const key = st.key.replace(' (all)', '');
+      for (const e of all ? alive : target ? [target] : []) {
+        if (key === 'burn') e.burn += st.amount;
+        if (key === 'brittle') e.brittle += st.amount;
+        if (key === 'stagger') e.stagger += st.amount;
+        if (key === 'bleed') e.bleed += st.amount;
+        if (key === 'mark') e.mark = true;
+      }
+    }
+    for (const st of p.selfStatuses) {
+      if (st.key === 'hyped') s.player.hyped = Math.min(4, s.player.hyped + st.amount);
+      if (st.key === 'slick') s.player.slick += st.amount;
+    }
+
+    // Counterweight arms off the block it just granted.
+    const counterEff = skill.effects.find((e) => e.type === 'counter');
+    if (counterEff && counterEff.type === 'counter') {
+      const m = isSigma ? (counterEff.sigmaMult ?? counterEff.mult) : counterEff.mult;
+      s.player.counter += Math.floor(p.block * m);
+    }
+
+    // Loaded Question spends the bank unless it Sigma'd.
+    const perSlip = skill.effects.find((e) => e.type === 'damagePerSlip');
+    if (perSlip && perSlip.type === 'damagePerSlip' && !(isSigma && perSlip.keepOnSigma)) {
+      s.player.slip = 0;
+    }
+
+    applyPostEffects(s, skill.effects, isSigma, rng);
+
+    if (skill.effects.some((e) => e.type === 'oncePerFight')) s.slots[i].spent = true;
+
+    // Delete: a kill refunds the turn.
+    if (skill.effects.some((e) => e.type === 'extraTurnOnKill') && target && target.hp <= 0) {
+      s.extraTurn = true;
+    }
+
     const bits: string[] = [];
     if (p.damage) bits.push(`${p.damage} dmg`);
+    if (p.aoe) bits.push(`${p.aoe} to all`);
     if (p.block) bits.push(`${p.block} block`);
+    if (p.heal) bits.push(`heal ${p.heal}`);
     if (p.slip) bits.push(`+${p.slip} Slip`);
-    if (p.brittle) bits.push(`Brittle ${p.brittle}`);
-    if (p.burn) bits.push(`Burn ${p.burn}`);
+    for (const st of p.statuses) bits.push(`${st.key} ${st.amount}`);
     log(
       s,
-      p.tier === 'NONE' ? 'player' : 'sigma',
-      `${p.skill.name}${tl ? ` — ${tl}` : ''}: ${bits.join(', ') || 'no effect'}`,
+      isSigma ? 'sigma' : 'player',
+      `${skill.name}${isSigma ? ` — ${tierLabel(p.tier)}` : ''}: ${bits.join(', ') || 'no effect'}`,
     );
 
-    events.push({
-      slotIndex: i,
-      skillName: p.skill.name,
-      tier: p.tier,
-      damage: p.damage,
-      block: p.block,
-      slip: p.slip,
-    });
+    events.push({ slotIndex: i, skillName: skill.name, tier: p.tier, damage: p.damage + p.aoe });
+
+    if (livingEnemies(s).length === 0) break;
   }
 
-  if (s.enemy.hp <= 0) {
+  // Retarget if the target died.
+  if (!livingEnemies(s).some((e) => e.id === s.targetId)) {
+    s.targetId = livingEnemies(s)[0]?.id ?? null;
+  }
+
+  if (livingEnemies(s).length === 0) {
     s.phase = 'WIN';
-    log(s, 'system', `${s.enemy.name} deleted.`);
+    log(s, 'system', 'Encounter cleared.');
     return { state: s, events };
   }
 
-  // --- enemy phase
-  if (s.enemy.burn > 0) {
-    s.enemy.hp -= s.enemy.burn;
-    s.stats.damageDealt += s.enemy.burn;
-    log(s, 'player', `Burn ticks for ${s.enemy.burn}.`);
-    s.enemy.burn = Math.floor(s.enemy.burn / 2);
-    if (s.enemy.hp <= 0) {
-      s.phase = 'WIN';
-      log(s, 'system', `${s.enemy.name} burned down.`);
-      return { state: s, events };
+  // ------------------------------------------------------- burn ticks
+  for (const e of livingEnemies(s)) {
+    if (e.burn > 0) {
+      e.hp -= e.burn;
+      s.stats.damageDealt += e.burn;
+      log(s, 'player', `${e.name} burns for ${e.burn}.`);
+      e.burn = Math.floor(e.burn / 2);
+    }
+  }
+  if (livingEnemies(s).length === 0) {
+    s.phase = 'WIN';
+    log(s, 'system', 'Burned down.');
+    return { state: s, events };
+  }
+
+  // ------------------------------------------------------- enemy phase
+  if (s.extraTurn) {
+    log(s, 'system', 'DELETE — extra turn.');
+  } else {
+    for (const enemy of livingEnemies(s)) {
+      const def = ENEMY_DEFS[enemy.defKey];
+      const intent = enemy.intent;
+      const stagMult = outgoingMult(enemy);
+
+      switch (intent.kind) {
+        case 'SMASH':
+        case 'GAMBLE': {
+          const base = intentDamage(enemy);
+          const hits = intent.hits ?? 1;
+          const dmg = Math.floor(base * stagMult);
+          for (let h = 0; h < hits; h++) dealToPlayer(s, dmg, enemy);
+          log(s, 'enemy', `${enemy.name} hits for ${dmg}${hits > 1 ? ` ×${hits}` : ''}.`);
+          break;
+        }
+        case 'GUARD':
+          enemy.block += intent.value;
+          log(s, 'enemy', `${enemy.name} guards ${intent.value}.`);
+          break;
+        case 'LOCK':
+          s.player.incomingJam += intent.value;
+          log(s, 'enemy', `${enemy.name} will jam ${intent.value} dice.`);
+          break;
+        case 'BUFF':
+          enemy.buff += intent.value;
+          log(s, 'enemy', `${enemy.name} powers up (+${intent.value}).`);
+          break;
+        case 'DRAIN': {
+          const drained = Math.min(s.player.slip, intent.value);
+          s.player.slip -= drained;
+          log(s, 'enemy', `${enemy.name} drains ${drained} Slip.`);
+          break;
+        }
+        case 'SUMMON': {
+          if (s.enemies.length < 5 && intent.summonKey) {
+            s.enemies.push(makeEnemy(intent.summonKey, rng));
+            log(s, 'enemy', `${enemy.name} summons reinforcements.`);
+          }
+          break;
+        }
+        case 'CURSE':
+          s.player.cursed += intent.value;
+          log(s, 'enemy', `${enemy.name} curses ${intent.value} dice.`);
+          break;
+        case 'STICKY':
+          if (s.player.jamImmuneTurns > 0) {
+            log(s, 'player', 'Non-Stick — sticky ignored.');
+          } else {
+            s.player.sticky = true;
+            log(s, 'enemy', `${enemy.name} makes your dice sticky.`);
+          }
+          break;
+        case 'HEAL': {
+          for (const e of livingEnemies(s)) e.hp = Math.min(e.maxHp, e.hp + intent.value);
+          log(s, 'enemy', `${enemy.name} heals the group ${intent.value}.`);
+          break;
+        }
+      }
+
+      if (stagMult < 1) enemy.stagger = Math.max(0, enemy.stagger - 1);
+      enemy.lastIntentKind = intent.kind;
+      if (def) {
+        enemy.intent = pickIntent(def, rng, intent.kind, enemy.phase);
+        rollGamble(enemy, rng);
+      }
+      if (s.player.hp <= 0) break;
     }
   }
 
-  const intent = s.enemy.intent;
-  switch (intent.kind) {
-    case 'SMASH': {
-      const dmg = intent.value + s.enemy.buff;
-      dealToPlayer(s, dmg);
-      log(s, 'enemy', `${s.enemy.name} smashes for ${dmg}.`);
-      break;
+  // --------------------------------------------------------- end of turn
+  if (!s.player.sticky) {
+    const unspent = s.dice.filter((d) => d.slot === null && !d.temp && !d.jammed).length;
+    if (unspent > 0) {
+      gainSlip(s, unspent);
+      log(s, 'slip', `${unspent} unspent dice → +${unspent} Slip.`);
     }
-    case 'GUARD':
-      s.enemy.block += intent.value;
-      log(s, 'enemy', `${s.enemy.name} guards for ${intent.value}.`);
-      break;
-    case 'LOCK':
-      s.player.incomingJam += intent.value;
-      log(s, 'enemy', `${s.enemy.name} will jam ${intent.value} dice.`);
-      break;
-    case 'BUFF':
-      s.enemy.buff += intent.value;
-      log(s, 'enemy', `${s.enemy.name} powers up (+${intent.value}).`);
-      break;
-    case 'DRAIN': {
-      const drained = Math.min(s.player.slip, intent.value);
-      s.player.slip -= drained;
-      log(s, 'enemy', `${s.enemy.name} drains ${drained} Slip.`);
-      break;
-    }
+  } else {
+    log(s, 'enemy', 'Sticky — no Slip from unspent dice.');
   }
 
-  s.enemy.lastIntentKind = intent.kind;
-  s.enemy.intent = pickIntent(ENEMY_DEFS[s.enemy.defKey], rng, intent.kind);
-
-  // --- end of turn
-  const unspent = s.dice.filter((d) => d.slot === null && !d.temp).length;
-  if (unspent > 0) {
-    gainSlip(s, unspent);
-    log(s, 'slip', `${unspent} unspent dice → +${unspent} Slip.`);
+  if (s.player.blockPersists) {
+    s.player.blockPersists = false;
+  } else {
+    s.player.block = 0;
   }
+  s.player.counter = 0;   // retaliation is a posture you hold for one turn
 
-  s.player.block = 0; // Block expires at end of the enemy phase.
-  if (s.enemy.brittle > 0) s.enemy.brittle = Math.max(0, s.enemy.brittle - 1);
+  for (const e of s.enemies) decayEnemy(e);
+  decayPlayer(s.player);
 
   if (s.player.hp <= 0) {
     s.phase = 'LOSE';
-    log(s, 'system', `You died to ${s.enemy.name}.`);
+    log(s, 'system', 'You died.');
     return { state: s, events };
   }
 
@@ -523,10 +822,10 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
   return { state: s, events };
 }
 
-// ------------------------------------------------------------- helpers
+// =============================================================== helpers
 
 export function unslottedDice(state: GameState): Die[] {
   return state.dice.filter((d) => d.slot === null);
 }
 
-export { diceInSlot, crownOf, floorOf };
+export { diceInSlot, crownOf, floorOf, livingEnemies, currentTarget, TIER_RANK, SIGMA_MULT, SKILLS, DICE_DEFS };

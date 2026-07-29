@@ -74,17 +74,39 @@ judgement no simulator can make.
 
 ---
 
-## Phase 2 — Combat Depth
+## Phase 2 — Combat Depth ✅ BUILT
 
-- [ ] All 34 skills implemented and data-driven (JSON)
-- [ ] All 22 dice, including special faces and traits
-- [ ] Status effects (all 10)
-- [ ] Slot-order resolution and combo interactions
-- [ ] 7 Act 1 enemies with intent tables and no-repeat rule
-- [ ] Multi-enemy encounters and targeting
-- [ ] Win/lose states
+- [x] All 34 skills implemented and data-driven
+- [x] All 22 dice, including special faces and traits (wild, echo, mirror,
+      slick, burning, greedy, cracked, cursed, the-slip)
+- [x] Status effects — all 10 (burn, brittle, stagger, bleed, mark; hyped,
+      slick, jammed, cursed, sticky)
+- [x] Slot-order resolution and combo interactions (Chain Reaction scales off
+      skills that already fired this turn)
+- [x] 7 Act 1 enemies + 2 elites + phased boss, intent tables, no-repeat rule
+- [x] Multi-enemy encounters and tap-to-target
+- [x] Win/lose states
+- [x] **Bonus:** 12 Act 1 encounters, boss phase transitions, GAMBLE intents
+      that pre-roll and show the result before resolving
 
-**Exit criterion:** a full Act 1 encounter set is playable and the four archetype lanes feel distinct.
+**Exit criterion — met.** All 12 encounters are playable start to finish and the
+lanes measure as genuinely distinct (docs/02 §13): manipulation 44.6 dmg/turn
+with a 48.8% Double Sigma rate, damage 36.7, combo 23.0 but Sigma-ing on 91% of
+activations. The defensive lane is the exception — see Finding F.
+
+### What Phase 2 changed
+
+- **Counterweight** retaliated only against the first attacker each turn and
+  never cleared its charge, so it silently compounded across turns where the
+  enemy guarded. Now hits every attacker, clears at end of turn.
+- Two CSS cascade bugs: `.enemies:has(...)` at specificity (0,3,0) was beating
+  `.enemies.many` at (0,2,0) so three enemies laid out in two columns; and
+  `.hpbar { flex: 1 }` collapsed to zero height inside the column-flex enemy
+  card, making every enemy HP bar invisible.
+
+**Open decisions before Phase 3:** Finding D (bag cap), Finding F (defensive
+lane), Finding H (starting loadout has no 3-dice skill, so new players never
+see a Double Sigma).
 
 ---
 

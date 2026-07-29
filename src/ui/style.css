@@ -86,11 +86,16 @@ body {
 
 /* ---------------------------------------------------------- status bar */
 
-#statusbar { display: flex; align-items: center; gap: 10px; }
+#statusbar { display: flex; flex-direction: column; gap: 5px; }
+.statusrow { display: flex; align-items: center; gap: 10px; }
 .hpbar {
-  flex: 1; height: 20px; background: #2a2738; border-radius: 4px;
+  height: 20px; background: #2a2738; border-radius: 4px;
   overflow: hidden; position: relative;
+  flex: 0 0 auto;          /* never let a column parent collapse the height */
 }
+.statusrow .hpbar { flex: 1 1 auto; }   /* in the status row it should fill */
+.hpbar.sm { height: 15px; }
+.hpbar.sm > span { font-size: 9px; }
 .hpbar > i { display: block; height: 100%; background: var(--danger); transition: width .25s ease; }
 .hpbar > span {
   position: absolute; inset: 0; display: grid; place-items: center;
@@ -103,28 +108,46 @@ body {
 .pill.block { background: rgba(91,141,239,.2); color: var(--block); }
 .pill.turn { color: var(--dim); }
 
-/* ---------------------------------------------------------- enemy */
+/* ---------------------------------------------------------- enemies
+   Multiple enemies share the field. The targeted one is ringed in gold —
+   the same colour Sigma uses, because both answer "where is my damage
+   going". Everything else stays quiet. */
 
 #enemyfield {
-  background: var(--panel-2); border-radius: var(--radius);
-  padding: 10px; text-align: center;
+  background: var(--panel-2); border-radius: var(--radius); padding: 8px;
 }
+.enemies { display: grid; grid-template-columns: 1fr; gap: 6px; align-items: start; }
+.enemies.two { grid-template-columns: 1fr 1fr; }
+.enemies.many { grid-template-columns: 1fr 1fr 1fr; }
+
+.enemy {
+  background: #221f31; border: 2px solid transparent; border-radius: 9px;
+  padding: 7px 6px; text-align: center; cursor: pointer;
+  transition: border-color .15s, background .15s;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.enemy.targeted { border-color: var(--gold); background: rgba(245,197,24,.07); }
+.enemy:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
 .intent {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   background: rgba(255,59,92,.15); color: var(--danger);
   border: 1px solid rgba(255,59,92,.4);
-  padding: 5px 12px; border-radius: 999px;
-  font-size: 12px; margin-bottom: 8px; letter-spacing: .5px;
+  padding: 3px 7px; border-radius: 999px;
+  font-size: 10px; letter-spacing: .3px; line-height: 1.3;
 }
 .enemy-box {
-  height: 68px; background: #35314a; border-radius: 8px;
-  display: grid; place-items: center;
-  font-family: var(--font-loud); font-weight: 800; font-size: 15px;
-  letter-spacing: 1.5px; margin-bottom: 8px; border: 1px solid #443f5e;
+  min-height: 46px; background: #35314a; border-radius: 7px;
+  display: grid; place-items: center; padding: 4px;
+  font-family: var(--font-loud); font-weight: 800; font-size: 11px;
+  letter-spacing: .8px; border: 1px solid #443f5e; line-height: 1.2;
 }
-.enemy-box.hurt { animation: jolt .18s; }
-@keyframes jolt { 50% { transform: translateX(-6px); } }
-.enemy-stats { display: flex; gap: 6px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
+.enemies.many .enemy-box { font-size: 9px; min-height: 40px; }
+.tagrow { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+.tagrow .pill { padding: 2px 6px; font-size: 9px; }
+.hint { color: var(--dim); font-size: 10px; text-align: center; padding-top: 4px; }
+.hint.slipc { color: var(--slip); }
+.goldc { color: var(--gold); }
 
 /* ---------------------------------------------------------- slots */
 
@@ -155,6 +178,7 @@ body {
 }
 .slot .out.gold { color: var(--gold); }
 .slot .out.blockc { color: var(--block); }
+.slot .out sub { font-size: 9px; vertical-align: baseline; }
 .slot .math { font-size: 9px; color: var(--dim); text-align: center; line-height: 1.25; }
 .slot .tier { font-size: 8px; color: var(--gold); letter-spacing: .5px; }
 
@@ -192,6 +216,11 @@ body {
 }
 .die.frozen { background: linear-gradient(160deg, #cfeaff, #9cc8ea); }
 .die.temp { background: linear-gradient(160deg, #e6d9ff, #bfa8e8); }
+.die.wild {
+  background: linear-gradient(135deg, #ffd6f5, #c9e7ff, #d8ffd6);
+  animation: hue 4s linear infinite;
+}
+@keyframes hue { to { filter: hue-rotate(360deg); } }
 .die .tag {
   position: absolute; bottom: -7px; font-size: 7px; letter-spacing: .3px;
   background: #16141f; color: var(--neutral); padding: 1px 4px;
@@ -212,9 +241,10 @@ body {
 .insp-empty { color: var(--dim); font-size: 11px; text-align: center; padding: 20px 0; }
 .insp { display: flex; flex-direction: column; gap: 7px; }
 .insp-head {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: 2px;
   font-size: 11px; color: var(--dim);
 }
+.insp-head .dim { font-size: 10px; opacity: .8; }
 .verbs { display: flex; gap: 5px; flex-wrap: wrap; }
 .verb {
   background: #2f2b42; border: 1px solid #3d3856; color: var(--neutral);
@@ -291,6 +321,7 @@ details > summary:focus-visible { outline: 2px solid var(--gold); outline-offset
   margin: 14px 0 7px; text-transform: uppercase; font-weight: 700;
 }
 .debug h3:first-child { margin-top: 0; }
+.debug optgroup { color: var(--gold); }
 .debug select, .debug button, .debug input {
   font-family: var(--font-data); font-size: 11px; background: #2f2b42;
   color: var(--neutral); border: 1px solid #3d3856; border-radius: 6px;

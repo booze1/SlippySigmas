@@ -11,7 +11,7 @@
 import { Rng } from '../engine/rng.js';
 import type { GameState, Die } from '../engine/types.js';
 import { newGame, resolveTurn, slotDie, nudge } from '../engine/combat.js';
-import { SKILLS, previewSlot, canSlot } from '../engine/skills.js';
+import { SKILLS, previewSlot, canSlot, slotValue } from '../engine/skills.js';
 import { facesOf } from '../engine/dice.js';
 import { nudgeCost } from '../engine/slip.js';
 
@@ -72,8 +72,7 @@ function scoreSlot(state: GameState, slotIndex: number, dice: Die[]): number {
     const target = s.dice.find((x) => x.id === d.id);
     if (target) target.slot = slotIndex;
   }
-  const p = previewSlot(s, slotIndex);
-  return p.damage + p.block * 0.6 + p.slip * 2 + p.brittle * 0.3 + p.burn * 0.8;
+  return slotValue(previewSlot(s, slotIndex));
 }
 
 /**
@@ -119,7 +118,7 @@ function turnValue(state: GameState): number {
   for (let i = 0; i < state.slots.length; i++) {
     const p = previewSlot(state, i);
     if (!p.ready) continue;
-    total += p.damage + p.block * 0.6 + p.slip * 2 + p.brittle * 0.3 + p.burn * 0.8;
+    total += slotValue(p);
   }
   return total;
 }
@@ -186,11 +185,11 @@ interface SimResult {
   taken: number;
 }
 
-function simulate(runs: number, bag: string[], loadout: string[], enemyKey: string): SimResult {
+function simulate(runs: number, bag: string[], loadout: string[], encounterKey: string): SimResult {
   const r: SimResult = { wins: 0, runs, turns: 0, damage: 0, sigma: 0, double: 0, omega: 0, none: 0, slipSpent: 0, taken: 0 };
 
   for (let i = 0; i < runs; i++) {
-    const g = newGame({ seed: 1000 + i, bag, loadout, enemyKey });
+    const g = newGame({ seed: 1000 + i, bag, loadout, encounterKey });
     let s = g.state;
     const rng = g.rng;
     let guard = 0;
@@ -236,26 +235,56 @@ console.log('Guardrails (docs/02 §10): Act 1 basic fight ≤ 4 turns, sigma-tie
 const d6x4 = ['standard_d6', 'standard_d6', 'standard_d6', 'standard_d6'];
 const d6x5 = [...d6x4, 'standard_d6'];
 const d6x6 = [...d6x5, 'standard_d6'];
+
 const starting = ['softening', 'cleave', 'fumble', 'brace'];
-const damageHeavy = ['cleave', 'haymaker', 'sigma_slam', 'brace'];
+const damageKit = ['cleave', 'haymaker', 'sigma_slam', 'brace'];
+const comboKit = ['softening', 'kindle', 'chain_reaction', 'spread'];
+const manipKit = ['greased_palms', 'duplicate', 'bend_the_odds', 'brace'];
+const tankKit = ['turtle', 'counterweight', 'immovable', 'jab'];
+const bigKit = ['sigma_slam', 'colossal_l', 'brace', 'fumble'];
+
 const loadedBag = ['loaded_d6', 'loaded_d6', 'standard_d6', 'standard_d6'];
 const stoneBag = ['sigma_stone', 'sigma_stone', 'sigma_stone', 'standard_d6'];
+const twinBag = ['twin_d6', 'twin_d6', 'twin_d6', 'standard_d6'];
 
-report('starting kit vs Slug', simulate(500, d6x4, starting, 'sigma_slug'));
-report('starting kit vs Wraith', simulate(500, d6x4, starting, 'ratio_wraith'));
-report('starting kit vs Golem', simulate(500, d6x4, starting, 'touch_grass_golem'));
-report('starting kit vs Mid (elite)', simulate(500, d6x4, starting, 'mid'));
-report('damage kit, 4 dice vs Wraith', simulate(500, d6x4, damageHeavy, 'ratio_wraith'));
-report('damage kit, 5 dice vs Wraith', simulate(500, d6x5, damageHeavy, 'ratio_wraith'));
-report('damage kit, 6 dice vs Wraith', simulate(500, d6x6, damageHeavy, 'ratio_wraith'));
-report('2× Loaded d6 vs Wraith', simulate(500, loadedBag, damageHeavy, 'ratio_wraith'));
-report('3× Sigma Stone vs Wraith', simulate(500, stoneBag, damageHeavy, 'ratio_wraith'));
-report('3× Sigma Stone vs Mid', simulate(500, stoneBag, damageHeavy, 'mid'));
+console.log('-- starting kit across the Act 1 ladder --');
+report('start vs lone NPC', simulate(300, d6x4, starting, 'a1_tutorial'));
+report('start vs Slug', simulate(300, d6x4, starting, 'a1_slug'));
+report('start vs Wraith', simulate(300, d6x4, starting, 'a1_wraith'));
+report('start vs Doomscroller+NPC', simulate(300, d6x4, starting, 'a1_scroll'));
+report('start vs Golem', simulate(300, d6x4, starting, 'a1_golem'));
+report('start vs Algorithm (hard)', simulate(300, d6x4, starting, 'a1_algo'));
+report('start vs 3-enemy swarm', simulate(300, d6x4, starting, 'a1_swarm'));
+report('start vs ELITE Mid', simulate(300, d6x4, starting, 'a1_elite_mid'));
+report('start vs BOSS Glizzy', simulate(300, d6x5, starting, 'a1_boss'));
 
-console.log('\n--- high-cost loadouts (can the top Sigma tiers be reached at all?) ---');
-const bigOnly = ['sigma_slam', 'colossal_l', 'brace', 'fumble'];
-report('3d+4d kit, 5 dice vs Mid', simulate(500, d6x5, bigOnly, 'mid'));
-report('3d+4d kit, 6 dice vs Mid', simulate(500, d6x6, bigOnly, 'mid'));
-report('3d+4d kit, 8 dice vs Mid', simulate(500, [...d6x6, 'standard_d6', 'standard_d6'], bigOnly, 'mid'));
+console.log('\n-- the four archetype lanes, 5 dice, vs ELITE Mid --');
+report('damage lane', simulate(300, d6x5, damageKit, 'a1_elite_mid'));
+report('combo lane', simulate(300, d6x5, comboKit, 'a1_elite_mid'));
+report('manipulation lane', simulate(300, d6x5, manipKit, 'a1_elite_mid'));
+report('tank lane', simulate(300, d6x5, tankKit, 'a1_elite_mid'));
+
+console.log('\n-- tank lane: stacked defence vs a realistic single defensive pick --');
+report('3 defence + Jab vs Mid', simulate(300, d6x5, tankKit, 'a1_elite_mid'));
+report('1 defence + 3 damage vs Mid', simulate(300, d6x5, ['brace', 'cleave', 'haymaker', 'sigma_slam'], 'a1_elite_mid'));
+report('3 defence + Jab vs swarm', simulate(300, d6x5, tankKit, 'a1_swarm'));
+
+console.log('\n-- lanes vs the 3-enemy swarm (does AoE separate them?) --');
+report('damage lane', simulate(300, d6x5, damageKit, 'a1_swarm'));
+report('combo lane', simulate(300, d6x5, comboKit, 'a1_swarm'));
+report('tank lane', simulate(300, d6x5, tankKit, 'a1_swarm'));
+
+console.log('\n-- bag composition vs BOSS Glizzy --');
+report('4 plain d6', simulate(300, d6x4, damageKit, 'a1_boss'));
+report('5 plain d6', simulate(300, d6x5, damageKit, 'a1_boss'));
+report('6 plain d6', simulate(300, d6x6, damageKit, 'a1_boss'));
+report('2x Loaded', simulate(300, loadedBag, damageKit, 'a1_boss'));
+report('3x Twin', simulate(300, twinBag, damageKit, 'a1_boss'));
+report('3x Sigma Stone', simulate(300, stoneBag, damageKit, 'a1_boss'));
+
+console.log('\n-- high-cost kit: can the top tiers be reached? --');
+report('3d+4d, 5 dice vs Mid', simulate(300, d6x5, bigKit, 'a1_elite_mid'));
+report('3d+4d, 6 dice vs Mid', simulate(300, d6x6, bigKit, 'a1_elite_mid'));
+report('3d+4d, 8 dice vs Mid', simulate(300, [...d6x6, 'standard_d6', 'standard_d6'], bigKit, 'a1_elite_mid'));
 
 console.log('');

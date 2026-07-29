@@ -1,126 +1,381 @@
 import type { Skill } from '../engine/types.js';
 
-// Pure content. Trivially serializable to JSON for a future data pipeline.
+// All 34 skills from docs/04-skill-catalogue.md, across four lanes.
+// Effect semantics are documented on SkillEffect in engine/types.ts.
+
 export const SKILLS: Skill[] = [
+  // ================================================== MANIPULATION (12)
   {
-    "key": "cleave",
-    "name": "Cleave",
-    "lane": "damage",
-    "cost": { "count": 2, "min": 2 },
-    "effects": [{ "type": "damage", "power": 1.0 }],
-    "blurb": "Deal PIP × 1.0."
+    key: 'fumble',
+    name: 'Fumble',
+    lane: 'manipulation',
+    rarity: 'common',
+    cost: { count: 1 },
+    effects: [{ type: 'slip', amount: 2, sigmaAmount: 4 }],
+    blurb: 'Gain 2 Slip. SIGMA: 4 instead.',
   },
   {
-    "key": "haymaker",
-    "name": "Haymaker",
-    "lane": "damage",
-    "cost": { "count": 2, "min": 4 },
-    "effects": [{ "type": "damage", "power": 1.3 }],
-    "blurb": "Deal PIP × 1.3."
-  },
-  {
-    "key": "sigma_slam",
-    "name": "Sigma Slam",
-    "lane": "damage",
-    "cost": { "count": 3, "min": 4 },
-    "effects": [{ "type": "damage", "power": 1.4 }],
-    "blurb": "Deal PIP × 1.4."
-  },
-  {
-    "key": "colossal_l",
-    "name": "Colossal L",
-    "lane": "damage",
-    "cost": { "count": 4, "min": 5 },
-    "effects": [{ "type": "damage", "power": 1.8 }],
-    "blurb": "Deal PIP × 1.8. Omega bait."
-  },
-  {
-    "key": "jab",
-    "name": "Jab",
-    "lane": "combo",
-    "cost": { "count": 1 },
-    "effects": [{ "type": "damage", "power": 1.5 }],
-    "blurb": "Deal PIP × 1.5."
-  },
-  {
-    "key": "softening",
-    "name": "Softening",
-    "lane": "combo",
-    "cost": { "count": 2 },
-    "effects": [
-      { "type": "damage", "power": 0.5 },
-      { "type": "brittle", "amount": 15, "sigmaAmount": 35 }
+    key: 'sleight',
+    name: 'Sleight',
+    lane: 'manipulation',
+    rarity: 'common',
+    cost: { count: 2 },
+    effects: [
+      { type: 'damage', power: 0.8 },
+      { type: 'slip', amount: 1, sigmaAmount: 3 },
     ],
-    "blurb": "Deal PIP × 0.5. Apply Brittle 15 (Sigma: 35)."
+    blurb: 'Deal PIP × 0.8. Gain 1 Slip. SIGMA: 3 Slip.',
   },
   {
-    "key": "kindle",
-    "name": "Kindle",
-    "lane": "combo",
-    "cost": { "count": 2 },
-    "effects": [{ "type": "burn", "power": 1.0, "sigmaPower": 2.0 }],
-    "blurb": "Apply Burn equal to PIP (Sigma: PIP × 2)."
-  },
-  {
-    "key": "fumble",
-    "name": "Fumble",
-    "lane": "manipulation",
-    "cost": { "count": 1 },
-    "effects": [{ "type": "slip", "amount": 2, "sigmaAmount": 4 }],
-    "blurb": "Gain 2 Slip (Sigma: 4)."
-  },
-  {
-    "key": "sleight",
-    "name": "Sleight",
-    "lane": "manipulation",
-    "cost": { "count": 2 },
-    "effects": [
-      { "type": "damage", "power": 0.8 },
-      { "type": "slip", "amount": 1, "sigmaAmount": 3 }
+    key: 'reset_button',
+    name: 'Reset Button',
+    lane: 'manipulation',
+    rarity: 'common',
+    cost: { count: 1, max: 2 },
+    effects: [
+      { type: 'rerollBag', freezeHighestOnSigma: true },
+      { type: 'slip', amount: 1 },
     ],
-    "blurb": "Deal PIP × 0.8. Gain 1 Slip (Sigma: 3)."
+    blurb: 'Reroll every die in the bag. Gain 1 Slip. SIGMA: freeze the highest result.',
   },
   {
-    "key": "overclock",
-    "name": "Overclock",
-    "lane": "manipulation",
-    "cost": { "count": 2, "min": 4 },
-    "effects": [
-      { "type": "damage", "power": 1.1 },
-      { "type": "slip", "amount": 2, "sigmaAmount": 4 }
+    key: 'greased_palms',
+    name: 'Greased Palms',
+    lane: 'manipulation',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [{ type: 'freeNudge', amount: 3, sigmaAmount: 6 }],
+    blurb: 'Your next 3 NUDGEs this turn cost 0. SIGMA: 6.',
+  },
+  {
+    key: 'duplicate',
+    name: 'Duplicate',
+    lane: 'manipulation',
+    rarity: 'uncommon',
+    cost: { count: 2, min: 3 },
+    effects: [
+      { type: 'damage', power: 1.0 },
+      { type: 'freeClone', times: 1, sigmaTimes: 2 },
     ],
-    "blurb": "Deal PIP × 1.1. Gain 2 Slip (Sigma: 4)."
+    blurb: 'Deal PIP × 1.0. CLONE one die free. SIGMA: twice.',
   },
   {
-    "key": "brace",
-    "name": "Brace",
-    "lane": "defense",
-    "cost": { "count": 1 },
-    "effects": [{ "type": "block", "power": 1.8 }],
-    "blurb": "Gain Block PIP × 1.8."
+    key: 'skim',
+    name: 'Skim',
+    lane: 'manipulation',
+    rarity: 'uncommon',
+    cost: { count: 1 },
+    effects: [
+      { type: 'damage', power: 1.2 },
+      { type: 'slipIfFace', face: 1, amount: 3 },
+    ],
+    blurb: 'Deal PIP × 1.2. On a 1, gain 3 Slip. SIGMA: gain it regardless.',
   },
   {
-    "key": "turtle",
-    "name": "Turtle",
-    "lane": "defense",
-    "cost": { "count": 2, "max": 3 },
-    "effects": [{ "type": "block", "power": 2.5 }],
-    "blurb": "Gain Block PIP × 2.5. Eats your low dice."
+    key: 'overclock',
+    name: 'Overclock',
+    lane: 'manipulation',
+    rarity: 'uncommon',
+    cost: { count: 2, min: 4 },
+    effects: [
+      { type: 'damage', power: 1.1 },
+      { type: 'selfStatus', status: 'hyped', amount: 1, sigmaAmount: 2 },
+    ],
+    blurb: 'Deal PIP × 1.1. Gain Hyped 1. SIGMA: Hyped 2.',
   },
   {
-    "key": "terminal_velocity",
-    "name": "Terminal Velocity",
-    "lane": "damage",
-    "cost": { "count": 2, "exact": 6 },
-    "effects": [{ "type": "damage", "power": 2.2 }],
-    "blurb": "Deal PIP × 2.2. Always Sigma by definition."
+    key: 'bend_the_odds',
+    name: 'Bend the Odds',
+    lane: 'manipulation',
+    rarity: 'rare',
+    cost: { count: 3 },
+    effects: [
+      { type: 'setSlottedToHighest' },
+      { type: 'damage', power: 1.0 },
+    ],
+    blurb: 'Level all three dice up to the highest among them, then deal PIP × 1.0. Makes its own Double Sigma.',
   },
   {
-    "key": "spread",
-    "name": "Spread",
-    "lane": "combo",
-    "cost": { "count": 2 },
-    "effects": [{ "type": "damage", "power": 0.6 }],
-    "blurb": "Deal PIP × 0.6. (AoE once multiple enemies land.)"
-  }
+    key: 'slip_stream',
+    name: 'Slip Stream',
+    lane: 'manipulation',
+    rarity: 'rare',
+    cost: { count: 2, parity: 'ODD' },
+    effects: [
+      { type: 'damage', power: 1.4 },
+      { type: 'slipPerFaceInBag', faces: [1, 3], doubleOnSigma: true },
+    ],
+    blurb: 'Deal PIP × 1.4. Gain Slip per 1 and 3 in your bag. SIGMA: double it.',
+  },
+  {
+    key: 'loaded_question',
+    name: 'Loaded Question',
+    lane: 'manipulation',
+    rarity: 'rare',
+    cost: { count: 2 },
+    effects: [{ type: 'damagePerSlip', power: 0.6, keepOnSigma: true }],
+    blurb: 'Deal PIP × 0.6 per Slip held, then lose it all. SIGMA: keep the Slip.',
+  },
+  {
+    key: 'the_gambit',
+    name: 'The Gambit',
+    lane: 'manipulation',
+    rarity: 'legendary',
+    cost: { count: 3, min: 5 },
+    effects: [
+      { type: 'rerollSlotted' },
+      { type: 'damage', power: 2.4 },
+    ],
+    blurb: 'Reroll the slotted dice, then deal PIP × 2.4 on the NEW result — Sigma included.',
+  },
+  {
+    key: 'hand_of_sig',
+    name: 'Hand of Sig',
+    lane: 'manipulation',
+    rarity: 'legendary',
+    cost: { count: 1, exact: 6 },
+    effects: [
+      { type: 'setAllBag', face: 6 },
+      { type: 'selfStatus', status: 'slick', amount: 3 },
+      { type: 'oncePerFight' },
+    ],
+    blurb: 'Set every die in your bag to 6. Gain Slick 3. Once per fight.',
+  },
+
+  // ==================================================== BIG NUMBER (8)
+  {
+    key: 'cleave',
+    name: 'Cleave',
+    lane: 'damage',
+    rarity: 'common',
+    cost: { count: 2, min: 2 },
+    effects: [{ type: 'damage', power: 1.0 }],
+    blurb: 'Deal PIP × 1.0.',
+  },
+  {
+    key: 'haymaker',
+    name: 'Haymaker',
+    lane: 'damage',
+    rarity: 'common',
+    cost: { count: 2, min: 4 },
+    effects: [{ type: 'damage', power: 1.3 }],
+    blurb: 'Deal PIP × 1.3.',
+  },
+  {
+    key: 'sigma_slam',
+    name: 'Sigma Slam',
+    lane: 'damage',
+    rarity: 'uncommon',
+    cost: { count: 3, min: 4 },
+    effects: [{ type: 'damage', power: 1.4 }],
+    blurb: 'Deal PIP × 1.4. The lane signature.',
+  },
+  {
+    key: 'ratio',
+    name: 'Ratio',
+    lane: 'damage',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [
+      { type: 'damage', power: 1.0, altPower: 2.0, condition: 'targetBelowPlayerHp' },
+    ],
+    blurb: 'Deal PIP × 1.0 — or × 2.0 if the target has less HP than you.',
+  },
+  {
+    key: 'grindset',
+    name: 'Grindset',
+    lane: 'damage',
+    rarity: 'uncommon',
+    cost: { count: 2, min: 3 },
+    effects: [
+      { type: 'damage', power: 1.2 },
+      { type: 'powerGain', amount: 0.1, sigmaAmount: 0.3 },
+    ],
+    blurb: 'Deal PIP × 1.2. Permanently +0.1 power this fight. SIGMA: +0.3.',
+  },
+  {
+    key: 'colossal_l',
+    name: 'Colossal L',
+    lane: 'damage',
+    rarity: 'rare',
+    cost: { count: 4, min: 5 },
+    effects: [{ type: 'damage', power: 1.8 }],
+    blurb: 'Deal PIP × 1.8. At OMEGA that is PIP × 7.56.',
+  },
+  {
+    key: 'terminal_velocity',
+    name: 'Terminal Velocity',
+    lane: 'damage',
+    rarity: 'rare',
+    cost: { count: 2, exact: 6 },
+    effects: [{ type: 'damage', power: 2.2, ignoreBlock: true }],
+    blurb: 'Deal PIP × 2.2, ignoring Block. Always Sigma by definition.',
+  },
+  {
+    key: 'delete',
+    name: 'Delete',
+    lane: 'damage',
+    rarity: 'legendary',
+    cost: { count: 3, min: 6 },
+    effects: [
+      { type: 'damage', power: 2.0 },
+      { type: 'extraTurnOnKill' },
+    ],
+    blurb: 'Deal PIP × 2.0. If this kills, take another turn.',
+  },
+
+  // ========================================================= COMBO (8)
+  {
+    key: 'jab',
+    name: 'Jab',
+    lane: 'combo',
+    rarity: 'common',
+    cost: { count: 1 },
+    effects: [{ type: 'damage', power: 1.5 }],
+    blurb: 'Deal PIP × 1.5.',
+  },
+  {
+    key: 'spread',
+    name: 'Spread',
+    lane: 'combo',
+    rarity: 'common',
+    cost: { count: 2 },
+    effects: [{ type: 'damage', power: 0.6, target: 'all' }],
+    blurb: 'Deal PIP × 0.6 to ALL enemies.',
+  },
+  {
+    key: 'tag',
+    name: 'Tag',
+    lane: 'combo',
+    rarity: 'common',
+    cost: { count: 1, max: 3 },
+    effects: [
+      { type: 'status', status: 'mark', amount: 1, target: 'target' },
+      { type: 'damage', power: 0.5 },
+    ],
+    blurb: 'Apply Mark — the next hit counts as SIGMA. Deal PIP × 0.5. SIGMA: Mark all.',
+  },
+  {
+    key: 'chain_reaction',
+    name: 'Chain Reaction',
+    lane: 'combo',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [
+      { type: 'damage', power: 0.7, repeatPerPrior: 1, sigmaRepeatPerPrior: 2 },
+    ],
+    blurb: 'Deal PIP × 0.7, repeated once per skill that already fired this turn. SIGMA: twice each.',
+  },
+  {
+    key: 'kindle',
+    name: 'Kindle',
+    lane: 'combo',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [
+      { type: 'status', status: 'burn', amount: 0, scaleWithPip: 1.0, sigmaScaleWithPip: 2.0 },
+    ],
+    blurb: 'Apply Burn equal to PIP. SIGMA: PIP × 2.',
+  },
+  {
+    key: 'softening',
+    name: 'Softening',
+    lane: 'combo',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [
+      { type: 'status', status: 'brittle', amount: 15, sigmaAmount: 35 },
+      { type: 'damage', power: 0.5 },
+    ],
+    blurb: 'Apply Brittle 15. Deal PIP × 0.5. SIGMA: Brittle 35.',
+  },
+  {
+    key: 'death_by_1000',
+    name: 'Death by 1000',
+    lane: 'combo',
+    rarity: 'rare',
+    cost: { count: 3 },
+    effects: [{ type: 'damage', power: 0.4, hits: 5, sigmaHits: 7 }],
+    blurb: 'Deal PIP × 0.4 five times. Each hit triggers Bleed separately. SIGMA: seven.',
+  },
+  {
+    key: 'full_send',
+    name: 'Full Send',
+    lane: 'combo',
+    rarity: 'rare',
+    cost: { count: 4 },
+    effects: [
+      { type: 'damage', power: 0.9, target: 'all' },
+      { type: 'status', status: 'stagger', amount: 1, sigmaAmount: 2, target: 'all' },
+    ],
+    blurb: 'Deal PIP × 0.9 to all enemies. Apply Stagger 1 to all. SIGMA: Stagger 2.',
+  },
+
+  // ======================================================= DEFENSE (6)
+  {
+    key: 'brace',
+    name: 'Brace',
+    lane: 'defense',
+    rarity: 'common',
+    cost: { count: 1 },
+    effects: [{ type: 'block', power: 1.8 }],
+    blurb: 'Gain Block PIP × 1.8.',
+  },
+  {
+    key: 'turtle',
+    name: 'Turtle',
+    lane: 'defense',
+    rarity: 'common',
+    cost: { count: 2, max: 3 },
+    effects: [{ type: 'block', power: 2.5 }],
+    blurb: 'Gain Block PIP × 2.5. Deliberately eats your low dice.',
+  },
+  {
+    key: 'counterweight',
+    name: 'Counterweight',
+    lane: 'defense',
+    rarity: 'uncommon',
+    cost: { count: 2 },
+    effects: [
+      { type: 'block', power: 1.5 },
+      { type: 'counter', mult: 1.0, sigmaMult: 2.0 },
+    ],
+    blurb: 'Gain Block PIP × 1.5 and deal that much to the first enemy that hits you. SIGMA: double.',
+  },
+  {
+    key: 'non_stick',
+    name: 'Non-Stick',
+    lane: 'defense',
+    rarity: 'uncommon',
+    cost: { count: 1 },
+    effects: [
+      { type: 'block', power: 1.2 },
+      { type: 'immuneJam', turns: 1, sigmaTurns: 2 },
+    ],
+    blurb: 'Gain Block PIP × 1.2. Immune to Jammed and Sticky this turn. SIGMA: 2 turns.',
+  },
+  {
+    key: 'second_wind',
+    name: 'Second Wind',
+    lane: 'defense',
+    rarity: 'rare',
+    cost: { count: 2, min: 4 },
+    effects: [
+      { type: 'block', power: 1.4 },
+      { type: 'heal', power: 0.5, sigmaPower: 1.2 },
+    ],
+    blurb: 'Gain Block PIP × 1.4. Heal PIP × 0.5. SIGMA: heal PIP × 1.2.',
+  },
+  {
+    key: 'immovable',
+    name: 'Immovable',
+    lane: 'defense',
+    rarity: 'rare',
+    cost: { count: 3 },
+    effects: [
+      { type: 'block', power: 2.0, persist: true },
+      { type: 'armor', amount: 2, sigmaOnly: true },
+    ],
+    blurb: 'Gain Block PIP × 2.0 that does not expire this turn. SIGMA: also gain Armor 2.',
+  },
 ];
