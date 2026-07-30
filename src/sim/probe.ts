@@ -298,6 +298,8 @@ import {
   newRun, enterNode, finishCombat, nextOptions, takeSkill, takeDie, takeRelic,
   skipReward, leaveNode, restHeal, chooseEvent, buy, type RunState,
 } from '../engine/run.js';
+import { newMeta, type MetaState } from '../engine/meta.js';
+import { UNLOCKS } from '../data/unlocks.js';
 
 /** Route heuristic: rest when hurt, take elites when healthy, else press on. */
 function chooseNode(run: RunState): number {
@@ -326,14 +328,14 @@ interface RunResult {
   deaths: Record<string, number>; finalBag: number; relics: number; biggest: number;
 }
 
-function simulateRuns(count: number): RunResult {
+function simulateRuns(count: number, meta?: MetaState): RunResult {
   const res: RunResult = {
     runs: count, wins: 0, actReached: [0, 0, 0, 0], nodes: 0,
     deaths: {}, finalBag: 0, relics: 0, biggest: 0,
   };
 
   for (let i = 0; i < count; i++) {
-    const { run: r0, rng } = newRun(5000 + i);
+    const { run: r0, rng } = newRun(5000 + i, meta);
     let run = r0;
     let guard = 0;
 
@@ -427,4 +429,42 @@ console.log(`avg nodes cleared ${(rr.nodes / rr.runs).toFixed(1)} · avg final b
 console.log(`biggest hit seen ${rr.biggest}`);
 const topDeaths = Object.entries(rr.deaths).sort((a, b) => b[1] - a[1]).slice(0, 6);
 console.log('deaths by killer:', topDeaths.map(([k, v]) => `${k} ${v}`).join(' · ') || 'none');
+console.log('');
+
+// ------------------------------------------- 4. heroes and Ascension
+//
+// Meta-progression must add VARIETY, never power: a fully-unlocked veteran and
+// a fresh account should reach the same ceiling. These rows check that.
+
+function metaFor(hero: string, ascension = 0, everything = false): MetaState {
+  const m = newMeta();
+  m.hero = hero;
+  m.ascension = ascension;
+  m.maxAscension = 12;
+  if (everything) m.unlocked = UNLOCKS.map((u) => u.key);
+  return m;
+}
+
+function reportRuns(label: string, r: RunResult): void {
+  console.log(
+    `${label.padEnd(30)} win ${((r.wins / r.runs) * 100).toFixed(0).padStart(3)}%  ` +
+    `act1/2/3 ${String(r.actReached[1]).padStart(3)}/${String(r.actReached[2]).padStart(3)}/${String(r.actReached[3]).padStart(3)}  ` +
+    `nodes ${(r.nodes / r.runs).toFixed(1)}  bag ${(r.finalBag / r.runs).toFixed(1)}  relics ${(r.relics / r.runs).toFixed(1)}`,
+  );
+}
+
+console.log('=== 4. HEROES & ASCENSION (120 runs each) ===\n');
+console.log('-- heroes, base pool, no Ascension --');
+reportRuns('SIG (the Fixer)', simulateRuns(120, metaFor('sig')));
+reportRuns('VEX (the Gambler)', simulateRuns(120, metaFor('vex')));
+reportRuns('OPHI (the Architect)', simulateRuns(120, metaFor('ophi')));
+
+console.log('\n-- does a fully-unlocked pool raise the ceiling? (it should not) --');
+reportRuns('SIG, base pool', simulateRuns(120, metaFor('sig')));
+reportRuns('SIG, everything unlocked', simulateRuns(120, metaFor('sig', 0, true)));
+
+console.log('\n-- Ascension should bite --');
+for (const tier of [0, 3, 6, 9, 12]) {
+  reportRuns(`SIG at A${tier}`, simulateRuns(120, metaFor('sig', tier, true)));
+}
 console.log('');

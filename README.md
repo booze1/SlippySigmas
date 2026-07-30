@@ -20,10 +20,11 @@ But you'll rarely roll a triple. What you have instead is **SLIP** — a currenc
 
 ## Status
 
-**Phase 3 built and playable — the complete run.** Three acts, a branching
-map, 34 skills, 22 dice, 10 statuses, 21 enemies, 6 elites, 3 phased bosses,
-18 relics, 14 events, shops, rests, die forging and skill upgrades. Runs
-complete start to finish; 38 of 200 simulated runs won.
+**Phase 4 built and playable — the meta layer.** Everything from Phase 3 (three
+acts, branching map, 34 skills, 22 dice, 10 statuses, 21 enemies, 6 elites, 3
+phased bosses, 18 relics, 14 events, shops, rests, forging, upgrades) wrapped in
+a persistent hub: Chips, a 25-node unlock tree, three heroes, 12 Ascension
+tiers, and a statistics screen. Progress saves to `localStorage`.
 
 ### Play it
 
@@ -61,6 +62,13 @@ the skill). Legal slots glow **teal**. Slots where a Sigma is still reachable
 glow **gold** — that is the whole game in one affordance. Spend Slip on the
 verbs to bend a die's face before you commit. When there is more than one
 enemy, tap one to target it. Nothing is locked in until you hit RESOLVE.
+
+**The Bag** is the hub you start in. Runs pay Chips whether you win or lose;
+Chips buy unlocks that widen what future runs can *offer* you — never what they
+can reach. Three heroes each bend dice a different way: Sig corrects a pip at a
+time, Vex rerolls past the problem and pays in blood, Ophi freezes a face and
+builds a perfect hand. Ascension adds twelve stacking difficulty modifiers once
+you have won.
 
 **The run:** pick a route on the act map — the whole thing is visible before
 you commit, edges included. Battles pay skills and gold, elites pay relics and

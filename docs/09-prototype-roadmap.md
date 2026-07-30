@@ -143,14 +143,38 @@ the agent before changing the game.
 
 ---
 
-## Phase 4 — Meta
+## Phase 4 — Meta ✅ BUILT
 
-- [ ] Chips, The Bag hub, unlock tree
-- [ ] `localStorage` persistence
-- [ ] Statistics screen
-- [ ] Heroes Vex and Ophi
-- [ ] 18 relics
-- [ ] Ascension tiers 1–12
+- [x] Chips, The Bag hub, 25-node unlock tree with four gated tiers
+- [x] `localStorage` persistence (best-effort — headless and private-mode safe)
+- [x] Statistics screen with deaths-by-killer, dice and skill pick rates
+- [x] Heroes Sig, Vex and Ophi, each with a working passive
+- [x] 18 relics (landed in Phase 3) + 2 hero-only relics
+- [x] Ascension tiers 1–12, all implemented and stacking
+
+**Exit criterion — met.** A fresh save starts in The Bag with one hero and the
+base pool; Chips bank on death or victory, unlocks gate correctly by tier, and
+progress survives a reload.
+
+### The locked principle, enforced in code
+
+Meta adds **variety, never power**. Unlocks only widen `run.pool` — the set of
+dice, skills and relics a run may be *offered*. Nothing is equipped from the
+hub, and no unlock raises a number. A fresh account and a fully-unlocked one hit
+the same ceiling; the veteran just has more routes to it.
+
+### What Phase 4 changed
+
+- **Hero passives were invisible.** The verb bar inferred "FREE" from the player
+  being unable to afford something — a hack that worked when free sources were
+  rare. Vex's free REROLL and Ophi's free FREEZE both displayed their normal
+  price. `slipCostOf()` now answers the question directly, mirroring the same
+  precedence `payFor()` uses, so the label cannot drift from the charge.
+- **Multi-word button labels were hand-spaced** (`B E G I N   R U N`), and HTML
+  collapses whitespace, so it rendered as `BEGINRUN`. Tracking moved to CSS
+  `letter-spacing` + `word-spacing`, where it belongs.
+- Freezing became a countdown rather than a flag, so Ophi's Blueprint can hold a
+  face across two rolls.
 
 ---
 

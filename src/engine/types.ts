@@ -36,6 +36,8 @@ export interface Die {
   /** Pips moved by NUDGE this turn. Drives escalating cost. */
   nudges: number;
   frozen: boolean;
+  /** Rolls this die will survive. Ophi's Blueprint freezes for 2. */
+  frozenTurns?: number;
   jammed: boolean;
   /** Index of the skill slot this die is committed to, or null. */
   slot: number | null;
@@ -274,6 +276,19 @@ export interface GameState {
   upgrades: string[];
   /** Perfect Pair: consumed by the first Sigma of the fight. */
   perfectPairReady: boolean;
+  /** Hero key — drives the passive. */
+  hero: string;
+  /** Sig's Steady Hands: one free NUDGE per turn. */
+  heroNudgeUsed: boolean;
+  /** Vex's Double or Nothing: rerolls past the first cost HP. */
+  rerollsThisTurn: number;
+  /** Ascension tier in force. */
+  ascension: number;
+  /** Ascension 12 flattens the Omega multiplier. */
+  omegaOverride: number | null;
+  /** Ascension 10: unspent dice only pay on alternating turns. */
+  slipEveryOtherTurn: boolean;
+  enemyDmgMult: number;
 }
 
 export interface LogEntry {

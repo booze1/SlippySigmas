@@ -587,3 +587,97 @@ Applied. Relics can still raise it: Big Bag +1, The Whole Bag +2. Average final
 bag across 200 runs is 6.5, so the cap binds late rather than constantly, which
 is the intent — the second half of a run should be about replacement, not
 accumulation.
+
+---
+
+## 15 — Phase 4 Simulation (heroes, unlocks, Ascension)
+
+### The locked principle holds ✅
+
+The whole meta design rests on "unlocks add variety, never power". That is now
+testable, and it passes:
+
+| Pool | Wins | Act 3 reached |
+|---|---|---|
+| SIG, base pool only | 25% | 56 / 120 |
+| SIG, all 25 unlocks bought | 28% | 75 / 120 |
+
+A 3-point spread across a fully-opened tree is inside noise. A fresh account and
+a maxed one reach the same ceiling; the veteran just sees more variety on the
+way. If this figure ever drifts past ~10 points, an unlock has started selling
+power instead of options.
+
+### Finding K — Ophi started with a fifth die, and that was the whole ballgame
+
+| Hero | Wins | Died in Act 1 |
+|---|---|---|
+| SIG | 25% | 26 / 120 |
+| VEX | 14% | 26 / 120 |
+| **OPHI (5 dice)** | **68%** | **0 / 120** |
+
+Never dying before Act 3 across 120 runs is not "strong", it is a different
+difficulty setting. The cause was not the free FREEZE or the 70 HP — it was the
+**5th starting die**, stacked on top of them.
+
+Bag size is the strongest damage lever in the game. §12 Finding D is the whole
+reason the cap came down from 8 to 7: dice count multiplies with itself, raising
+both PIP and the Sigma tier. Handing one hero +25% bag on turn 1, *plus* +10 HP,
+*plus* a free verb, *plus* a compounding relic made her strictly better rather
+than different — which is exactly what a hero roster must not be.
+
+**Fix: Ophi starts with 4 Heavy d6, not 5.** Wins fell 68% → 23%, and she now
+loses 33 of 120 runs in Act 1 instead of none. Her identity — consistency, free
+freezing, and winning the long fight — is untouched. She is still the strongest
+hero, which suits a 700-Chip tier-4 unlock.
+
+### Caveat — two of three hero passives are invisible to the simulator
+
+Vex reads at 14%, the weakest of the three, and I have deliberately **not**
+tuned her. The greedy AI's only Slip verb is NUDGE: it never rerolls and never
+freezes. Vex's entire character is free REROLL, so the simulator plays her as
+"Sig with 48 HP and a cursed die" — strictly worse, by construction.
+
+Sig loses his free nudge in the cheaper harness too. Ophi's advantages (Heavy
+dice, Slow Build) are the only ones that survive an AI that does not manipulate.
+
+Hero balance is therefore the **least** trustworthy number in this document.
+Finding K was safe to act on because a 68% win rate with zero early deaths is
+too large to be an artefact. The Sig-versus-Vex gap is not, and needs a human.
+
+### Full-run baseline moved with the content
+
+Section 3's figure is now **28% wins** (was 19%), with 125 of 200 runs reaching
+Act 3 and deaths concentrated on the final boss (39) rather than scattered
+mid-game. That is the shape a finished act structure should have.
+
+### Finding L — Ascension collapsed at tier 3
+
+A twelve-tier ladder should ramp. It did not:
+
+| Tier | Wins | Nodes cleared |
+|---|---|---|
+| A0 | 28% | 6.3 |
+| **A3** | **4%** | **2.0** |
+| A6 | 4% | 1.8 |
+| A9 | 3% | 1.7 |
+| A12 | 1% | 3.1 |
+
+Everything from A3 up was the same difficulty, because tier 3 — *start with one
+fewer die* — did nearly all the damage on its own. Average bag fell from 6.8 to
+3.7 and runs ended after two nodes.
+
+This is Finding K in reverse. Bag size is the strongest lever in the game in
+**both** directions: at 3 starting dice the odds of any pair fall from 72% to
+44%, 3-dice skills need the entire bag, and 4-dice skills cannot fire at all.
+Removing a die is not a 1-of-12 nudge, it is a different game.
+
+**Fix: swap tier 3 and tier 11.** The Cursed d6 (mild) moves down; the missing
+die (brutal) moves to 11, where a near-maximum tier should hurt. Measured on a
+like-for-like harness, the cliff moved with it — Act-1 deaths at A3 fell from
+99/120 to 42/120, while A11 now shows 95/120. The ladder ramps instead of
+falling off a step.
+
+**Caveat:** the confirmation run used the cheaper harness (no Slip spending), so
+its absolute win rates are not comparable to the table above — only the *shape*
+is. Re-measuring the full ladder with the good AI is a ~20-minute job worth
+doing before Ascension is considered tuned.

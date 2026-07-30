@@ -65,7 +65,22 @@ Everything unlocked enters the **shared run pool**: it can now appear as a rewar
 | **HERO 3: OPHI** | 700 |
 | **Ascension mode** | Free on first win |
 
-**Total tree cost:** ~7,400 Chips ≈ 25–35 runs to fully unlock. At ~13 minutes a run that's roughly 6–8 hours to see all content — the right length for a project of this scope.
+**Total tree cost: 6,150 Chips** (measured against the implemented tree — the
+earlier ~7,400 estimate was a guess). At ~150 Chips for a typical run that is
+roughly **40 runs** to fully unlock, or ~8–9 hours at 13 minutes a run.
+
+Slightly longer than the 25–35 runs originally intended. The lever if that feels
+like a grind is Chip payout, not tree cost — raising the per-node rate from 4 to
+6 brings it back to ~30 runs without touching what anything is worth.
+
+### Measured payout
+
+| Run outcome | Chips |
+|---|---|
+| Died in Act 1 | ~29–45 |
+| Died in Act 2 | ~110–140 |
+| Died in Act 3 | ~230–260 |
+| Full win | ~450–480 |
 
 ### Unlock pacing intent
 
@@ -103,12 +118,19 @@ Low HP, free rerolls, higher Sigma ceiling. Plays fast and violently. Rerolling 
 | | |
 |---|---|
 | HP | 70 |
-| Bag | 5 × Heavy d6 (faces 2,2,3,3,4,4) |
+| Bag | 4 × Heavy d6 (faces 2,2,3,3,4,4) |
 | Passive | **Blueprint** — FREEZE costs 0 and lasts 2 turns |
 | Starting relic | *Slow Build* — +0.15 to all SkillPower per turn elapsed in the current fight |
 | Skills | Immovable, Grindset, Greased Palms, Softening |
 
-Starts with five consistent low dice and free freezing — builds a perfect hand over 3–4 turns, then detonates. Loses to speed, wins attrition. The anti-Vex.
+Consistent low dice and free freezing — builds a perfect hand over 3–4 turns,
+then detonates. Loses to speed, wins attrition. The anti-Vex.
+
+> **Revised down from 5 starting dice.** At 5 she won 68% of simulated runs and
+> never died before Act 3, against Sig's 25%. A 5th die is worth much more than
+> it looks — bag size is the strongest damage lever in the game, which is why
+> the cap came down to 7 — and stacking it on +10 HP, a free verb and a
+> compounding relic made her strictly better rather than different.
 
 **Design rationale:** the three heroes map to the three ways you can beat randomness — *correct it* (Sig/Nudge), *reroll past it* (Vex/Reroll), or *lock it down* (Ophi/Freeze). Same pillar, three verbs, three completely different games.
 
@@ -130,7 +152,7 @@ Passive gear. Found at Elites, Treasures, Bosses, and Shops. No slot limit — r
 ### Uncommon
 | Relic | Effect |
 |---|---|
-| **Big Bag** | +1 die capacity (max 8 still applies) |
+| **Big Bag** | +1 bag capacity (7 → 8) |
 | **Deep Pockets** | Slip cap 10 → 15 |
 | **Fifth Slot** | +1 skill slot |
 | **Hype Machine** | Gain Hyped 1 whenever you Double Sigma |
@@ -149,10 +171,14 @@ Passive gear. Found at Elites, Treasures, Bosses, and Shops. No slot limit — r
 ### Legendary
 | Relic | Effect |
 |---|---|
-| **The Whole Bag** | +2 die capacity, cap raised to 10 |
+| **The Whole Bag** | +2 bag capacity (7 → 9) |
 | **Kingmaker** | At ROLL, one random die is automatically set to match another |
 
-**Kingmaker** guarantees a Sigma pair every single turn, forever. It's the single strongest item in the game and it's legendary for that reason. **Flag for playtest** — if it invalidates the manipulation lane (why spend Slip when the relic does it free?), the fix is to make it trigger every *other* turn rather than nerfing the effect, so it stays exciting when it fires.
+**Kingmaker** was designed to guarantee a Sigma pair every single turn. As
+built it fires **every other turn** — the fallback this section already
+predicted. Guaranteeing a pair *every* turn invalidates the manipulation lane
+outright (why spend Slip when a relic does it free?), and alternating keeps it
+exciting when it lands rather than nerfing the effect itself.
 
 ---
 
@@ -164,16 +190,22 @@ Unlocked on first run win. 12 tiers, each adding a permanent modifier that stack
 |---|---|
 | 1 | Elites are more common |
 | 2 | Enemy HP +10% |
-| 3 | Start each run with 1 fewer die |
+| 3 | Start each run with a Cursed d6 in your bag |
 | 4 | Rest nodes heal 20% instead of 30% |
 | 5 | Enemy damage +10% |
 | 6 | Shops cost 25% more |
 | 7 | Slip cap 10 → 7 |
-| 8 | Bosses gain a fourth phase |
+| 8 | Bosses gain +25% HP |
 | 9 | Enemy HP +10% (cumulative +20%) |
 | 10 | Unspent dice give Slip only every other turn |
-| 11 | Start each run with a Cursed d6 in your bag |
+| 11 | Start each run with 1 fewer die |
 | 12 | **Omega Sigma multiplier reduced to ×3.0** |
+
+> **Deviation from the original design.** Tier 8 was written as "bosses gain a
+> fourth phase". Authoring three extra boss phases is content work, not a
+> difficulty knob, so it ships as **+25% boss HP** — same intent (bosses become
+> the wall), a fraction of the surface area. Worth revisiting if Ascension ever
+> gets a content pass.
 
 Tier 12 is the cruel one on purpose: it takes away the biggest payoff in the game and forces mastery of consistent mid-tier Sigma instead of jackpot-chasing. It's the final exam for the whole design.
 

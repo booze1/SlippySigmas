@@ -1,22 +1,33 @@
-// Slippy Sigmas — Phase 3 "the run".
+// Slippy Sigmas — Phase 4 "the meta".
 //
-// Three acts, 18 nodes, a branching map, rewards, shops, rests and events.
-// Controller + renderer; the engine underneath is pure and UI-agnostic. A fight
-// is a GameState the run owns for a while — everything persistent lives in
-// RunState.
+// Three acts wrapped in a persistent meta layer: Chips, the unlock tree, three
+// heroes, Ascension, and a statistics screen. Controller + renderer; the engine
+// underneath is pure and UI-agnostic.
+//
+// Three levels of state, outermost first:
+//   MetaState  persists across runs in localStorage
+//   RunState   one run: HP, gold, bag, loadout, relics, map position
+//   GameState  one fight, owned by the run for a while
 
 import type { GameState, Die, Enemy } from './engine/types.js';
 import {
   newRun, enterNode, finishCombat, nextOptions, takeSkill, takeDie, takeRelic,
   skipReward, rewardDone, leaveNode, buy, restHeal, restForge, restUpgrade,
-  chooseEvent, effectiveBagCap, relicDef, skillName, type RunState, type ForgeKind,
+  chooseEvent, effectiveBagCap, relicDef, skillName, runOutcome,
+  type RunState, type ForgeKind,
 } from './engine/run.js';
 import { NODE_ICON, NODE_LABEL } from './engine/map.js';
+import {
+  loadMeta, saveMeta, wipeMeta, buyUnlock, canBuy, tierUnlocked, availableHeroes,
+  setHero, setAscension, recordRun, remainingCost, type MetaState,
+} from './engine/meta.js';
+import { UNLOCKS, TIER_GATES, ASCENSION, MAX_ASCENSION } from './data/unlocks.js';
+import { HEROES, HERO_DEFS } from './data/heroes.js';
 import { DICE_DEFS as DDEFS, entryFaces } from './engine/dice.js';
 import { Rng } from './engine/rng.js';
 import {
   resolveTurn, slotDie, unslotDie, autoSlot, setSlotSkill,
-  setTarget, nudge, reroll, freeze, cloneFace, setFace, split, canAfford,
+  setTarget, nudge, reroll, freeze, cloneFace, setFace, split, canAfford, slipCostOf,
   type ResolveEvent,
 } from './engine/combat.js';
 import {
@@ -25,7 +36,7 @@ import {
 } from './engine/skills.js';
 import { DICE_DEFS, facesOf, crownOf, isWild, faceLabel, traitOf } from './engine/dice.js';
 import { intentLabel, intentIcon } from './engine/enemy.js';
-import { nudgeCost, FLAT_COSTS, VERB_BLURB, type SlipVerb } from './engine/slip.js';
+import { VERB_BLURB, type SlipVerb } from './engine/slip.js';
 import { tierLabel, TIER_RANK } from './engine/sigma.js';
 import { enemyStatusTags, playerStatusTags } from './engine/status.js';
 
@@ -33,6 +44,10 @@ import { enemyStatusTags, playerStatusTags } from './engine/status.js';
 
 let rng: Rng;
 let run: RunState;
+let meta: MetaState;
+
+/** Hub screens live outside a run, so they are tracked separately. */
+type HubScreen = 'hub' | 'unlocks' | 'stats' | 'heroes' | null;
 
 /** Combat state lives inside the run; this is a convenience alias. */
 let state: GameState;
@@ -50,14 +65,35 @@ const ui = {
   forgeDie: null as number | null,
   /** Shop flow: buying a skill needs a slot, removal needs a die. */
   shopPending: null as number | null,
+  /** Which out-of-run screen is showing. null means a run is in progress. */
+  hub: 'hub' as HubScreen,
+  /** Chips awarded by the run that just ended, for the summary. */
+  lastChips: 0,
+  runBanked: false,
 };
 
 function startRun(seed?: number): void {
-  const g = newRun(seed);
+  const g = newRun(seed, meta);
   run = g.run;
   rng = g.rng;
+  ui.hub = null;
+  ui.runBanked = false;
+  ui.lastChips = 0;
   syncCombat();
   render();
+}
+
+/**
+ * Bank the finished run into the meta layer exactly once. Both end screens can
+ * re-render many times, and paying Chips twice for one run would quietly break
+ * the whole economy.
+ */
+function bankRun(): void {
+  if (ui.runBanked) return;
+  ui.runBanked = true;
+  const { meta: next, chips } = recordRun(meta, runOutcome(run));
+  meta = next;
+  ui.lastChips = chips;
 }
 
 function syncCombat(): void {
@@ -116,6 +152,18 @@ function sigmaPotential(die: Die, slotIndex: number): boolean {
 // ----------------------------------------------------------------- render
 
 function render(): void {
+  if (ui.hub) {
+    ($('combat-screen') as HTMLElement).hidden = true;
+    $('runbar').innerHTML = renderHubBar();
+    $('other-screen').innerHTML = renderHub();
+    $('debug').innerHTML = '';
+    ($('debugwrap') as HTMLElement).hidden = true;
+    return;
+  }
+  ($('debugwrap') as HTMLElement).hidden = false;
+
+  if (run.screen === 'dead' || run.screen === 'won') bankRun();
+
   const inCombat = run.screen === 'combat' && !!run.combat;
   ($('combat-screen') as HTMLElement).hidden = !inCombat;
   const other = $('other-screen');
@@ -164,6 +212,160 @@ function renderScreen(): string {
     case 'won': return renderEnd(true);
     default: return '';
   }
+}
+
+// --------------------------------------------------------------- hub screens
+
+function renderHubBar(): string {
+  return `
+    <div class="runrow">
+      <span class="pill act">THE BAG</span>
+      <div class="hubchips"><b>${meta.chips}</b> chips</div>
+      ${meta.ascension > 0 ? `<span class="pill asc">A${meta.ascension}</span>` : ''}
+    </div>`;
+}
+
+function renderHub(): string {
+  switch (ui.hub) {
+    case 'unlocks': return renderUnlocks();
+    case 'stats': return renderStats();
+    case 'heroes': return renderHeroes();
+    default: return renderHubHome();
+  }
+}
+
+function renderHubHome(): string {
+  const hero = HERO_DEFS[meta.hero];
+  const s = meta.stats;
+  const rate = s.runs ? Math.round((s.wins / s.runs) * 100) : 0;
+  return `
+    <div class="screen">
+      <h1 class="wordmark">SLIPPY SIGMAS</h1>
+      <p class="lead">Roll bad dice. Make them good. Delete everything.</p>
+
+      ${ui.lastChips ? `<div class="card chipcard"><div class="cardhead">Run banked</div>
+        <div class="carddesc">+${ui.lastChips} chips${run.screen === 'won' ? ' — run complete.' : `, died in Act ${run.act}.`}</div></div>` : ''}
+
+      <button class="card pick herocard" data-hub="heroes">
+        <div class="cardhead">${esc(hero.name)} <span class="dim">${esc(hero.title)}</span></div>
+        <div class="carddesc">${esc(hero.passiveText)}</div>
+        <div class="cost">tap to change hero${availableHeroes(meta).length > 1 ? '' : ' — 1 unlocked'}</div>
+      </button>
+
+      <button class="wide" id="beginrun">BEGIN RUN</button>
+
+      <div class="offers">
+        <button class="card pick" data-hub="unlocks">
+          <div class="cardhead">The Unlock Tree</div>
+          <div class="carddesc">${meta.unlocked.length} / ${UNLOCKS.length} unlocked · ${remainingCost(meta)} chips remaining</div>
+        </button>
+        <button class="card pick" data-hub="stats">
+          <div class="cardhead">Statistics</div>
+          <div class="carddesc">${s.runs} runs · ${s.wins} wins (${rate}%) · biggest hit ${s.biggestHit}</div>
+        </button>
+        ${meta.maxAscension > 0 ? `<div class="card">
+          <div class="cardhead">Ascension</div>
+          <div class="carddesc">${meta.ascension === 0 ? 'Off.' : esc(ASCENSION[meta.ascension - 1].text)}</div>
+          <div class="ascrow">
+            <button class="chip" data-asc="${meta.ascension - 1}" ${meta.ascension <= 0 ? 'disabled' : ''}>−</button>
+            <b>A${meta.ascension}</b>
+            <button class="chip" data-asc="${meta.ascension + 1}" ${meta.ascension >= meta.maxAscension ? 'disabled' : ''}>+</button>
+            <span class="dim">max A${meta.maxAscension} of ${MAX_ASCENSION}</span>
+          </div>
+        </div>` : ''}
+      </div>
+
+      <p class="fine">Unlocks add variety, never power. A first run and a hundredth run have the same ceiling.</p>
+    </div>`;
+}
+
+function renderUnlocks(): string {
+  const groups = TIER_GATES.map((gate) => {
+    const open = tierUnlocked(meta, gate.tier);
+    const rows = UNLOCKS.filter((u) => u.tier === gate.tier).map((u) => {
+      const owned = meta.unlocked.includes(u.key);
+      const buyable = canBuy(meta, u);
+      const label = u.kind === 'die' ? DDEFS[u.target]?.name
+        : u.kind === 'skill' ? SKILLS[u.target]?.name
+        : u.kind === 'hero' ? `HERO — ${HERO_DEFS[u.target]?.name}`
+        : '+1 skill slot relics';
+      const detail = u.kind === 'die' ? (DDEFS[u.target]?.note ?? '')
+        : u.kind === 'skill' ? (SKILLS[u.target]?.blurb ?? '')
+        : u.kind === 'hero' ? (HERO_DEFS[u.target]?.blurb ?? '')
+        : 'Fifth Slot and Sixth Slot can now appear as relics.';
+      return `<button class="card pick ${owned ? 'owned' : ''} ${buyable ? '' : 'poor'}"
+                 data-unlock="${u.key}" ${buyable ? '' : 'disabled'}>
+        <div class="cardhead">${esc(label ?? u.target)}
+          <span class="price">${owned ? '✓' : `${u.cost}`}</span></div>
+        <div class="carddesc">${esc(detail)}</div></button>`;
+    }).join('');
+    return `<h3>${open ? '' : '🔒 '}Tier ${gate.tier} — ${esc(gate.label)}</h3><div class="offers">${rows}</div>`;
+  }).join('');
+
+  return `<div class="screen">
+    <h2>The Unlock Tree</h2>
+    <p class="lead">Everything here enters the shared run pool — it can then appear as a reward, in shops, or in events. Nothing is equipped from here.</p>
+    ${groups}
+    <button class="wide ghost" data-hub="hub">Back</button>
+  </div>`;
+}
+
+function renderStats(): string {
+  const s = meta.stats;
+  const rate = s.runs ? Math.round((s.wins / s.runs) * 100) : 0;
+  const top = (rec: Record<string, number>, n = 5) =>
+    Object.entries(rec).sort((a, b) => b[1] - a[1]).slice(0, n);
+
+  const deaths = top(s.deaths);
+  const dice = top(s.diceUsed);
+  const skills = top(s.skillsUsed);
+
+  return `<div class="screen">
+    <h2>Statistics</h2>
+    <div class="statgrid big">
+      <span>runs</span><b>${s.runs}</b>
+      <span>wins</span><b>${s.wins}</b>
+      <span>win rate</span><b>${rate}%</b>
+      <span>best act reached</span><b>${s.bestAct}</b>
+      <span>biggest single hit</span><b class="goldc">${s.biggestHit}</b>
+      <span>highest Sigma tier</span><b class="goldc">${s.highestTier}</b>
+      <span>total Slip spent</span><b>${s.totalSlipSpent}</b>
+      <span>total damage</span><b>${s.totalDamage}</b>
+      <span>fastest win</span><b>${s.fastestWinNodes ?? '—'}${s.fastestWinNodes ? ' nodes' : ''}</b>
+    </div>
+
+    ${deaths.length ? `<h3>Deaths by killer</h3><div class="barlist">${deaths.map(([k, v]) =>
+      `<div class="bar"><span>${esc(k)}</span><i style="width:${(v / deaths[0][1]) * 100}%"></i><b>${v}</b></div>`).join('')}</div>` : ''}
+
+    ${dice.length ? `<h3>Most-carried dice</h3><div class="barlist">${dice.map(([k, v]) =>
+      `<div class="bar"><span>${esc(DDEFS[k]?.name ?? k)}</span><i style="width:${(v / dice[0][1]) * 100}%"></i><b>${v}</b></div>`).join('')}</div>` : ''}
+
+    ${skills.length ? `<h3>Most-equipped skills</h3><div class="barlist">${skills.map(([k, v]) =>
+      `<div class="bar"><span>${esc(SKILLS[k]?.name ?? k)}</span><i style="width:${(v / skills[0][1]) * 100}%"></i><b>${v}</b></div>`).join('')}</div>` : ''}
+
+    <button class="wide ghost" data-hub="hub">Back</button>
+    <button class="wide ghost" id="wipemeta">Erase all progress</button>
+  </div>`;
+}
+
+function renderHeroes(): string {
+  const open = availableHeroes(meta);
+  return `<div class="screen">
+    <h2>Choose your hero</h2>
+    <p class="lead">Each hero is a different relationship with Slip: correct it, reroll past it, or lock it down.</p>
+    <div class="offers">${HEROES.map((h) => {
+      const unlocked = open.includes(h.key);
+      const current = meta.hero === h.key;
+      return `<button class="card pick ${current ? 'owned' : ''} ${unlocked ? '' : 'poor'}"
+                data-hero="${h.key}" ${unlocked ? '' : 'disabled'}>
+        <div class="cardhead">${esc(h.name)} <span class="dim">${esc(h.title)}</span>
+          <span class="price">${current ? '✓' : unlocked ? '' : '🔒'}</span></div>
+        <div class="carddesc">${esc(h.blurb)}</div>
+        <div class="cost">${h.maxHp} HP · ${h.bag.length} dice · ${esc(h.passiveText)}</div>
+      </button>`;
+    }).join('')}</div>
+    <button class="wide ghost" data-hub="hub">Back</button>
+  </div>`;
 }
 
 // ------------------------------------------------------------------ screens
@@ -403,7 +605,8 @@ function renderEnd(won: boolean): string {
       <span>relics</span><b>${run.relics.length}</b>
       <span>seed</span><b>${run.seed}</b>
     </div>
-    <button class="wide" id="newrunbtn">New run</button>
+    <div class="chipaward">+${ui.lastChips} chips</div>
+    <button class="wide" id="tohub">Back to The Bag</button>
   </div>`;
 }
 
@@ -525,17 +728,18 @@ function renderInspector(): void {
   const faces = facesOf(d).filter((f) => f !== -1);
   const lo = Math.min(...faces);
   const hi = Math.max(...faces);
-  const nc = nudgeCost(d);
-  const freeNudge = canAfford(state, 'NUDGE', d) && state.player.slip < nc;
+  const nudgePrice = slipCostOf(state, 'NUDGE', d);
+  const freeNudge = nudgePrice === 0;
 
   const canDown = !isWild(d) && d.face > lo && !d.jammed && !d.temp && canAfford(state, 'NUDGE', d);
   const canUp = !isWild(d) && d.face < hi && !d.jammed && !d.temp && canAfford(state, 'NUDGE', d);
 
   const flat = (v: Exclude<SlipVerb, 'NUDGE'>, extra = true) => {
     const ok = canAfford(state, v, d) && !d.jammed && extra;
-    const free = ok && state.player.slip < FLAT_COSTS[v];
-    return `<button class="verb ${ui.armed === v ? 'armed' : ''}" data-verb="${v}" ${ok ? '' : 'disabled'}
-      title="${esc(VERB_BLURB[v])}">${v} <span class="c">${free ? 'FREE' : FLAT_COSTS[v]}</span></button>`;
+    const price = slipCostOf(state, v, d);
+    return `<button class="verb ${ui.armed === v ? 'armed' : ''} ${price === 0 ? 'freev' : ''}"
+      data-verb="${v}" ${ok ? '' : 'disabled'}
+      title="${esc(VERB_BLURB[v])}">${v} <span class="c">${price === 0 ? 'FREE' : price}</span></button>`;
   };
 
   const setPicker = ui.armed === 'SET'
@@ -552,8 +756,8 @@ function renderInspector(): void {
         ${def?.note ? `<span class="dim">${esc(def.note)}</span>` : ''}
       </div>
       <div class="verbs">
-        <button class="verb nudge" data-nudge="-1" ${canDown ? '' : 'disabled'}>▼ ${d.face - 1 >= lo ? d.face - 1 : '–'} <span class="c">${freeNudge ? 'FREE' : nc}</span></button>
-        <button class="verb nudge" data-nudge="1" ${canUp ? '' : 'disabled'}>▲ ${d.face + 1 <= hi ? d.face + 1 : '–'} <span class="c">${freeNudge ? 'FREE' : nc}</span></button>
+        <button class="verb nudge ${freeNudge ? 'freev' : ''}" data-nudge="-1" ${canDown ? '' : 'disabled'}>▼ ${d.face - 1 >= lo ? d.face - 1 : '–'} <span class="c">${freeNudge ? 'FREE' : nudgePrice}</span></button>
+        <button class="verb nudge ${freeNudge ? 'freev' : ''}" data-nudge="1" ${canUp ? '' : 'disabled'}>▲ ${d.face + 1 <= hi ? d.face + 1 : '–'} <span class="c">${freeNudge ? 'FREE' : nudgePrice}</span></button>
         ${flat('REROLL')}
         ${flat('FREEZE', !d.frozen && !d.temp)}
         ${flat('CLONE')}
@@ -582,11 +786,11 @@ function renderSlip(): void {
 
 function renderResolve(): void {
   const btn = $('resolve') as HTMLButtonElement;
-  if (state.phase === 'WIN') btn.textContent = 'V I C T O R Y — again';
-  else if (state.phase === 'LOSE') btn.textContent = 'D E F E A T — again';
+  if (state.phase === 'WIN') btn.textContent = 'VICTORY';
+  else if (state.phase === 'LOSE') btn.textContent = 'DEFEAT';
   else {
     const ready = state.slots.filter((_, i) => slotReady(state, i)).length;
-    btn.textContent = ready ? `R E S O L V E  (${ready})` : 'R E S O L V E  (skip)';
+    btn.textContent = ready ? `RESOLVE (${ready})` : 'RESOLVE (skip)';
   }
 }
 
@@ -699,7 +903,7 @@ function bindOnce(): void {
   let downX = 0, downY = 0, moved = false;
 
   document.addEventListener('pointerdown', (ev) => {
-    if (run.screen !== 'combat') return;
+    if (ui.hub || run.screen !== 'combat') return;
     const el = (ev.target as HTMLElement).closest('.die') as HTMLElement | null;
     if (!el) return;
     const die = state.dice.find((d) => d.id === el.dataset.id);
@@ -764,6 +968,33 @@ function bindOnce(): void {
   document.addEventListener('click', (ev) => {
     const t = ev.target as HTMLElement;
 
+    // -------------------------------------------------------------- the hub
+    const hubBtn = t.closest('[data-hub]') as HTMLElement | null;
+    if (hubBtn) { ui.hub = hubBtn.dataset.hub as HubScreen; render(); return; }
+    if (t.closest('#beginrun')) { startRun(); return; }
+    if (t.closest('#tohub')) { ui.hub = 'hub'; render(); return; }
+
+    const unlockBtn = t.closest('[data-unlock]') as HTMLElement | null;
+    if (unlockBtn) { meta = buyUnlock(meta, unlockBtn.dataset.unlock!); render(); return; }
+
+    const heroBtn = t.closest('[data-hero]') as HTMLElement | null;
+    if (heroBtn) { meta = setHero(meta, heroBtn.dataset.hero!); ui.hub = 'hub'; render(); return; }
+
+    const ascBtn = t.closest('[data-asc]') as HTMLElement | null;
+    if (ascBtn) { meta = setAscension(meta, Number(ascBtn.dataset.asc)); render(); return; }
+
+    if (t.closest('#wipemeta')) {
+      // Destructive and irreversible, so it asks first.
+      if (confirm('Erase all chips, unlocks and statistics? This cannot be undone.')) {
+        meta = wipeMeta();
+        ui.hub = 'hub';
+        render();
+      }
+      return;
+    }
+
+    if (ui.hub) return;   // nothing below the hub is reachable while it is open
+
     // ---------------------------------------------------------- run screens
     const node = t.closest('[data-node]') as HTMLElement | null;
     if (node) { setRun(enterNode(run, Number(node.dataset.node), rng)); return; }
@@ -786,7 +1017,7 @@ function bindOnce(): void {
     if (t.closest('#cancelskill')) { ui.pendingSkill = null; render(); return; }
     if (t.closest('#skipskill')) { setRun(skipReward(run)); return; }
     if (t.closest('#continue')) { setRun(leaveNode(run)); return; }
-    if (t.closest('#newrunbtn')) { startRun(); return; }
+    if (t.closest('#newrunbtn')) { ui.hub = 'hub'; render(); return; }
 
     const buyEl = t.closest('[data-buy]') as HTMLElement | null;
     if (buyEl) {
@@ -882,7 +1113,7 @@ function bindOnce(): void {
 
   document.addEventListener('keydown', (ev) => {
     if ((ev.target as HTMLElement).tagName === 'INPUT') return;
-    if (run.screen !== 'combat') return;
+    if (ui.hub || run.screen !== 'combat') return;
     if (ev.key === 'Enter') { doResolve(); return; }
     if (ev.key === 'Escape') { ui.selected = null; ui.armed = null; render(); return; }
     const n = Number(ev.key);
@@ -904,4 +1135,13 @@ function openPanelsOnWideScreens(): void {
 
 openPanelsOnWideScreens();
 bindOnce();
-startRun();
+
+// Meta loads first — the hub is the entry point, not a run.
+meta = loadMeta();
+saveMeta(meta);
+const boot = newRun(undefined, meta);
+run = boot.run;
+rng = boot.rng;
+state = run.combat ?? ({} as GameState);
+ui.hub = 'hub';
+render();

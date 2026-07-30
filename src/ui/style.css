@@ -258,6 +258,9 @@ body {
 .verb .c { color: var(--slip); font-weight: 700; }
 .verb.armed { background: var(--slip); color: #10202a; border-color: var(--slip); }
 .verb.nudge { background: #3a3452; min-width: 66px; justify-content: center; }
+/* A free verb is a hero passive firing — it should read as one. */
+.verb.freev { border-color: var(--slip); }
+.verb.freev .c { color: var(--slip); font-weight: 700; letter-spacing: .5px; }
 
 /* ---------------------------------------------------------- slip */
 
@@ -273,8 +276,8 @@ body {
 #resolve {
   background: var(--gold); color: #17140a; border: 0; border-radius: var(--radius);
   padding: 16px; font-family: var(--font-loud); font-weight: 800; font-size: 15px;
-  letter-spacing: 3px; cursor: pointer; box-shadow: 0 4px 0 #b8940f;
-  min-height: 54px;
+  letter-spacing: 4px; word-spacing: 8px; cursor: pointer;
+  box-shadow: 0 4px 0 #b8940f; min-height: 54px;
 }
 #resolve:active { transform: translateY(3px); box-shadow: 0 1px 0 #b8940f; }
 #resolve:focus-visible { outline: 2px solid var(--neutral); outline-offset: 3px; }
@@ -441,13 +444,15 @@ button.card.pick:disabled, .card.poor { opacity: .4; cursor: not-allowed; }
 button.wide {
   background: var(--gold); color: #17140a; border: 0; border-radius: var(--radius);
   padding: 14px; font-family: var(--font-loud); font-weight: 800; font-size: 13px;
-  letter-spacing: 2px; cursor: pointer; box-shadow: 0 4px 0 #b8940f; min-height: 50px;
+  letter-spacing: 3px; word-spacing: 7px; cursor: pointer;
+  box-shadow: 0 4px 0 #b8940f; min-height: 50px;
 }
 button.wide:active { transform: translateY(3px); box-shadow: 0 1px 0 #b8940f; }
 button.wide:focus-visible { outline: 2px solid var(--neutral); outline-offset: 3px; }
 button.wide.ghost {
   background: transparent; color: var(--dim); border: 1px solid var(--line);
-  box-shadow: none; letter-spacing: 1px; font-size: 11px; min-height: 42px;
+  box-shadow: none; letter-spacing: 1px; word-spacing: normal;
+  font-size: 11px; min-height: 42px;
 }
 
 /* ------------------------------------------------------------- the map */
@@ -502,3 +507,52 @@ button.wide.ghost {
 }
 .bagrow:last-child { border-bottom: 0; }
 .bagrow .dim { color: var(--dim); text-align: right; max-width: 60%; }
+
+/* --------------------------------------------------------- the hub
+   Out-of-run screens. The wordmark is the only place type gets loud;
+   everything else stays quiet so the run screens keep their weight. */
+
+.wordmark {
+  font-family: var(--font-loud); font-size: clamp(26px, 9vw, 34px);
+  font-weight: 800; letter-spacing: -0.5px; line-height: 1;
+  color: var(--gold); text-wrap: balance;
+}
+.hubchips { flex: 1; text-align: right; font-size: 12px; color: var(--dim); }
+.hubchips b { color: var(--gold); font-size: 15px; }
+.pill.asc { color: var(--danger); background: rgba(255,59,92,.15); letter-spacing: 1px; }
+
+.card.owned { border-color: var(--slip); }
+.card.owned .price { color: var(--slip); }
+.card.chipcard { border-color: var(--gold); }
+.card.herocard .cardhead .dim { font-weight: 400; font-size: 11px; color: var(--dim); }
+
+.fine { font-size: 10px; color: var(--dim); line-height: 1.5; opacity: .8; }
+
+.ascrow { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; }
+.ascrow b { color: var(--danger); min-width: 26px; text-align: center; }
+.ascrow .dim { color: var(--dim); font-size: 10px; }
+.chip {
+  background: #2f2b42; border: 1px solid #3d3856; color: var(--neutral);
+  border-radius: 6px; width: 32px; height: 32px; cursor: pointer;
+  font-family: var(--font-data); font-size: 14px;
+}
+.chip:disabled { opacity: .3; cursor: not-allowed; }
+.chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.chipaward { color: var(--gold); font-size: 15px; font-weight: 700; }
+
+/* Horizontal bars for the statistics screen. Encoding counts as length as well
+   as number means the shape of the data reads before the digits do. */
+.barlist { display: flex; flex-direction: column; gap: 4px; }
+.bar {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 8px; position: relative; padding: 6px 8px;
+  background: var(--panel-2); border-radius: 6px; font-size: 11px;
+  overflow: hidden;
+}
+.bar > i {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: rgba(245,197,24,.14); z-index: 0;
+}
+.bar > span, .bar > b { position: relative; z-index: 1; }
+.bar > b { color: var(--gold); font-variant-numeric: tabular-nums; }

@@ -26,6 +26,7 @@ import {
 } from './enemy.js';
 import { nudgeCost, FLAT_COSTS, type SlipVerb } from './slip.js';
 import { decayEnemy, decayPlayer, outgoingMult } from './status.js';
+import { ascensionMods } from './meta.js';
 import { tierLabel, TIER_RANK, SIGMA_MULT } from './sigma.js';
 
 export const SLOT_COUNT = 4;
@@ -67,6 +68,8 @@ export interface NewGameOpts {
   encounterKey?: string;
   maxHp?: number;
   startSlip?: number;
+  hero?: string;
+  ascension?: number;
   hp?: number;
   gold?: number;
   relics?: string[];
@@ -87,15 +90,20 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
   if (!encounter) throw new Error(`Unknown encounter: ${encounterKey}`);
 
   const relics = opts.relics ?? [];
+  const asc = ascensionMods(opts.ascension ?? 0);
   const dice = bag.map((k) => makeDie(k, rng));
   // The Slip raises the cap just by being in the bag.
-  let slipCap = 10 + dice.filter((d) => hasTrait(d, 'theslip')).length * 5;
+  let slipCap = asc.slipCap + dice.filter((d) => hasTrait(d, 'theslip')).length * 5;
   if (relics.includes('deep_pockets')) slipCap += 5;
   slipCap += opts.slipCapBonus ?? 0;
   const slotCount =
     opts.slots ??
     SLOT_COUNT + (relics.includes('fifth_slot') ? 1 : 0) + (relics.includes('sixth_slot') ? 1 : 0);
-  const enemies = encounter.enemies.map((k) => makeEnemy(k, rng));
+  const enemies = encounter.enemies.map((k) => {
+    const def = ENEMY_DEFS[k];
+    const mult = asc.enemyHpMult * (def?.tier === 'boss' ? asc.bossHpMult : 1);
+    return makeEnemy(k, rng, mult);
+  });
 
   const state: GameState = {
     seed,
@@ -144,6 +152,13 @@ export function newGame(opts: NewGameOpts = {}): { state: GameState; rng: Rng } 
     relics,
     upgrades: opts.upgrades ?? [],
     perfectPairReady: relics.includes('perfect_pair'),
+    hero: opts.hero ?? 'sig',
+    heroNudgeUsed: false,
+    rerollsThisTurn: 0,
+    ascension: opts.ascension ?? 0,
+    omegaOverride: asc.omegaMult,
+    slipEveryOtherTurn: asc.slipEveryOtherTurn,
+    enemyDmgMult: asc.enemyDmgMult,
   };
 
   startTurn(state, rng);
@@ -158,6 +173,8 @@ function startTurn(s: GameState, rng: Rng): void {
   s.extraTurn = false;
   s.player.freeNudges = 0;
   s.player.freeClones = 0;
+  s.heroNudgeUsed = false;
+  s.rerollsThisTurn = 0;
 
   // Temp dice (SPLIT, Echo) evaporate.
   s.dice = s.dice.filter((d) => !d.temp);
@@ -168,9 +185,12 @@ function startTurn(s: GameState, rng: Rng): void {
     die.jammed = false;
     die.usedFreeNudge = false;
     die.echoed = false;
-    if (die.frozen) {
-      die.frozen = false; // kept its face through this roll, now thaws
+    if ((die.frozenTurns ?? 0) > 0) {
+      // Keeps its face through this roll. Ophi freezes for two.
+      die.frozenTurns = (die.frozenTurns ?? 0) - 1;
+      die.frozen = (die.frozenTurns ?? 0) > 0;
     } else {
+      die.frozen = false;
       rollDie(die, rng);
       // Cracked d6 gets two swings at turn 1 and keeps the better one.
       if (s.turn === 1 && hasTrait(die, 'cracked')) {
@@ -368,6 +388,22 @@ export function setTarget(state: GameState, enemyId: string): GameState {
  * d6's per-turn freebie, Greased Palms' free nudges, then Slick status.
  */
 function payFor(s: GameState, verb: SlipVerb, cost: number, die?: Die): boolean {
+  // Hero passives come first — they are the character, not a discount.
+  if (verb === 'NUDGE' && s.hero === 'sig' && !s.heroNudgeUsed) {
+    s.heroNudgeUsed = true;
+    return true;
+  }
+  if (verb === 'REROLL' && s.hero === 'vex') {
+    // Free, but every reroll after the first each turn is paid in blood.
+    if (s.rerollsThisTurn > 0) {
+      s.player.hp -= 2;
+      s.stats.damageTaken += 2;
+      log(s, 'enemy', 'Double or Nothing — 2 HP for the reroll.');
+    }
+    s.rerollsThisTurn += 1;
+    return true;
+  }
+  if (verb === 'FREEZE' && s.hero === 'ophi') return true;
   if (verb === 'NUDGE' && die && hasTrait(die, 'slick') && !die.usedFreeNudge) {
     die.usedFreeNudge = true;
     return true;
@@ -394,8 +430,29 @@ function payFor(s: GameState, verb: SlipVerb, cost: number, die?: Die): boolean 
   return true;
 }
 
+/**
+ * What this verb will actually cost in Slip right now, counting every free
+ * source in the same precedence payFor uses. The UI previously inferred "free"
+ * from unaffordability, which hid Vex's free REROLL and Ophi's free FREEZE
+ * behind their normal price — the hero passive was invisible.
+ */
+export function slipCostOf(state: GameState, verb: SlipVerb, die?: Die): number {
+  if (verb === 'NUDGE' && state.hero === 'sig' && !state.heroNudgeUsed) return 0;
+  if (verb === 'REROLL' && state.hero === 'vex') return 0;
+  if (verb === 'FREEZE' && state.hero === 'ophi') return 0;
+  if (verb === 'NUDGE' && die && hasTrait(die, 'slick') && !die.usedFreeNudge) return 0;
+  if (verb === 'NUDGE' && state.player.freeNudges > 0) return 0;
+  if (verb === 'CLONE' && state.player.freeClones > 0) return 0;
+  if (verb === 'SET' && die && hasTrait(die, 'theslip') && !die.usedFreeSet) return 0;
+  if (state.player.slick > 0) return 0;
+  return verb === 'NUDGE' ? (die ? nudgeCost(die) : 1) : FLAT_COSTS[verb];
+}
+
 /** Can the player afford this verb right now, counting all free sources? */
 export function canAfford(state: GameState, verb: SlipVerb, die?: Die): boolean {
+  if (verb === 'NUDGE' && state.hero === 'sig' && !state.heroNudgeUsed) return true;
+  if (verb === 'REROLL' && state.hero === 'vex') return true;
+  if (verb === 'FREEZE' && state.hero === 'ophi') return true;
   if (verb === 'NUDGE' && die && hasTrait(die, 'slick') && !die.usedFreeNudge) return true;
   if (verb === 'NUDGE' && state.player.freeNudges > 0) return true;
   if (verb === 'CLONE' && state.player.freeClones > 0) return true;
@@ -445,7 +502,8 @@ export function freeze(state: GameState, dieId: string): GameState {
   const die = s.dice.find((d) => d.id === dieId)!;
   if (!payFor(s, 'FREEZE', FLAT_COSTS.FREEZE)) return state;
   die.frozen = true;
-  log(s, 'slip', `Froze a ${die.face}.`);
+  die.frozenTurns = s.hero === 'ophi' ? 2 : 1;
+  log(s, 'slip', `Froze a ${die.face}${s.hero === 'ophi' ? ' for 2 turns' : ''}.`);
   return s;
 }
 
@@ -796,7 +854,7 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
         case 'GAMBLE': {
           const base = intentDamage(enemy);
           const hits = intent.hits ?? 1;
-          const dmg = Math.floor(base * stagMult);
+          const dmg = Math.floor(base * stagMult * s.enemyDmgMult);
           for (let h = 0; h < hits; h++) dealToPlayer(s, dmg, enemy);
           log(s, 'enemy', `${enemy.name} hits for ${dmg}${hits > 1 ? ` ×${hits}` : ''}.`);
           break;
@@ -911,13 +969,16 @@ export function resolveTurn(state: GameState, rng: Rng): ResolveResult {
   }
 
   // --------------------------------------------------------- end of turn
-  if (!s.player.sticky) {
+  const slipTurnOk = !s.slipEveryOtherTurn || s.turn % 2 === 1;
+  if (!s.player.sticky && slipTurnOk) {
     const per = s.relics.includes('momentum') ? 2 : 1;
     const unspent = s.dice.filter((d) => d.slot === null && !d.temp && !d.jammed).length;
     if (unspent > 0) {
       gainSlip(s, unspent * per);
       log(s, 'slip', `${unspent} unspent dice → +${unspent * per} Slip.`);
     }
+  } else if (!slipTurnOk) {
+    log(s, 'enemy', 'Ascension — no Slip from unspent dice this turn.');
   } else {
     log(s, 'enemy', 'Sticky — no Slip from unspent dice.');
   }

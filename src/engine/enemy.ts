@@ -59,15 +59,16 @@ export function resetEnemyCounter(): void {
   enemyCounter = 0;
 }
 
-export function makeEnemy(defKey: string, rng: Rng): Enemy {
+export function makeEnemy(defKey: string, rng: Rng, hpMult = 1): Enemy {
   const def = ENEMY_DEFS[defKey];
   if (!def) throw new Error(`Unknown enemy: ${defKey}`);
+  const hp = Math.round(def.hp * hpMult);
   const enemy: Enemy = {
     id: `e${enemyCounter++}`,
     defKey,
     name: def.name,
-    hp: def.hp,
-    maxHp: def.hp,
+    hp,
+    maxHp: hp,
     block: 0,
     buff: 0,
     burn: 0,

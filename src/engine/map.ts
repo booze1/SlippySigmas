@@ -60,7 +60,7 @@ const WEIGHTS: { kind: NodeKind; weight: number }[] = [
   { kind: 'treasure', weight: 2 },
 ];
 
-function generateOnce(act: number, rng: Rng): ActMap {
+function generateOnce(act: number, rng: Rng, weights = WEIGHTS): ActMap {
   const rows: MapNode[][] = [];
 
   for (let r = 0; r < ROWS; r++) {
@@ -76,7 +76,7 @@ function generateOnce(act: number, rng: Rng): ActMap {
       if (r === 0) kind = 'battle';
       else if (r === ROWS - 1) kind = 'boss';
       else if (r === ROWS - 2) kind = rng.float() < 0.7 ? 'rest' : 'treasure';
-      else kind = rng.weighted(WEIGHTS).kind;
+      else kind = rng.weighted(weights).kind;
       row.push({ id: `a${act}r${r}c${c}`, row: r, col: c, kind, next: [] });
     }
     rows.push(row);
@@ -151,13 +151,16 @@ function isValid(map: ActMap): boolean {
   return true;
 }
 
-export function generateMap(act: number, rng: Rng): ActMap {
+export function generateMap(act: number, rng: Rng, eliteBonus = 0): ActMap {
+  const weights = eliteBonus
+    ? WEIGHTS.map((w) => (w.kind === 'elite' ? { ...w, weight: w.weight + eliteBonus } : w))
+    : WEIGHTS;
   for (let attempt = 0; attempt < 200; attempt++) {
-    const map = generateOnce(act, rng);
+    const map = generateOnce(act, rng, weights);
     if (isValid(map)) return map;
   }
   // Fall back to a hand-shaped map rather than shipping an invalid one.
-  const map = generateOnce(act, rng);
+  const map = generateOnce(act, rng, weights);
   map.rows[1][0].kind = 'event';
   map.rows[2][0].kind = 'shop';
   for (const n of map.rows[ROWS - 2]) n.kind = 'rest';

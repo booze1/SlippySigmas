@@ -43,6 +43,14 @@ export const RELICS: RelicDef[] = [
   },
 ];
 
+// Hero starting relics. Granted at run start, never in the drop pool.
+export const HERO_RELIC_DEFS: RelicDef[] = [
+  { key: 'loaded_deck', name: 'Loaded Deck', rarity: 'rare', text: 'Sigma multipliers +0.4 at every tier.' },
+  { key: 'slow_build', name: 'Slow Build', rarity: 'rare', text: '+0.15 to all skill power per turn elapsed this fight.' },
+];
+
+RELICS.push(...HERO_RELIC_DEFS);
+
 export const RELIC_DEFS: Record<string, RelicDef> = Object.fromEntries(
   RELICS.map((r) => [r.key, r]),
 );

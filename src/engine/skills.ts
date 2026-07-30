@@ -177,12 +177,21 @@ export function previewSlot(
   // rather than 34 bespoke "+" variants. Same shape, far less surface area.
   const up = upgraded ? 1.25 : 1;
   if (upgraded) out.notes.push('upgraded');
+  // Ophi's Slow Build rewards the long fight she is designed to win.
+  const slowBuild = state.relics.includes('slow_build') ? 0.15 * (state.turn - 1) : 0;
 
   // The Multiplier rewrites the whole Sigma ladder.
   if (state.relics.includes('the_multiplier') && out.tier !== 'NONE') {
     const table: Record<string, number> = { SIGMA: 1.8, DOUBLE: 3.0, OMEGA: 4.8 };
     out.mult = table[out.tier] ?? out.mult;
   }
+  // Ascension 12 flattens the biggest payoff in the game, forcing mastery of
+  // consistent mid-tier Sigma instead of jackpot-chasing.
+  if (state.omegaOverride !== null && out.tier === 'OMEGA') {
+    out.mult = Math.min(out.mult, state.omegaOverride);
+  }
+  // Vex's Loaded Deck: a flat lift on every tier.
+  if (state.relics.includes('loaded_deck') && out.tier !== 'NONE') out.mult += 0.4;
   // Perfect Pair promotes the first Sigma of the fight one tier.
   if (state.perfectPairReady && out.tier === 'SIGMA') {
     out.tier = 'DOUBLE';
@@ -220,9 +229,9 @@ export function previewSlot(
   for (const eff of skill.effects) {
     switch (eff.type) {
       case 'damage': {
-        let power = eff.power + state.player.bonusPower;
+        let power = eff.power + state.player.bonusPower + slowBuild;
         if (eff.condition === 'targetBelowPlayerHp' && eff.altPower !== undefined) {
-          if (target && target.hp < state.player.hp) power = eff.altPower + state.player.bonusPower;
+          if (target && target.hp < state.player.hp) power = eff.altPower + state.player.bonusPower + slowBuild;
         }
         let hits = isSigma ? (eff.sigmaHits ?? eff.hits ?? 1) : (eff.hits ?? 1);
         if (eff.repeatPerPrior) {

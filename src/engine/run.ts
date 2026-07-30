@@ -8,12 +8,17 @@
 import type { BagEntry, GameState } from './types.js';
 import { Rng } from './rng.js';
 import { generateMap, reachable, type ActMap, type NodeKind } from './map.js';
-import { newGame, BAG_CAP, DEFAULT_BAG, DEFAULT_LOADOUT, SLOT_COUNT } from './combat.js';
+import { newGame, BAG_CAP, SLOT_COUNT } from './combat.js';
 import { DICE_LIST, DICE_DEFS, entryFaces } from './dice.js';
 import { SKILL_LIST, SKILLS } from './skills.js';
 import { encountersFor } from '../data/enemies.js';
 import { RELICS, RELIC_DEFS, type RelicDef } from '../data/relics.js';
 import { EVENTS, type EventDef, type EventAction } from '../data/events.js';
+import { HERO_DEFS } from '../data/heroes.js';
+import {
+  availableDice, availableSkills, availableRelics, ascensionMods,
+  type MetaState, type RunOutcome,
+} from './meta.js';
 
 /** Max HP granted for clearing an act boss. */
 export const BOSS_MAX_HP = 12;
@@ -68,6 +73,16 @@ export interface RunState {
   nodesCleared: number;
   totalDamage: number;
   biggestHit: number;
+
+  hero: string;
+  ascension: number;
+  /** What this run may be offered, gated by meta unlocks. */
+  pool: { dice: string[]; skills: string[]; relics: string[] };
+  elitesKilled: number;
+  bossesKilled: number;
+  slipSpent: number;
+  highestTier: string;
+  killedBy: string | null;
 }
 
 // ------------------------------------------------------------- rarity
@@ -106,23 +121,30 @@ function pickBy<T extends { rarity: Rarity; key: string }>(
 
 // --------------------------------------------------------------- setup
 
-export function newRun(seed?: number): { run: RunState; rng: Rng } {
+export function newRun(seed?: number, meta?: MetaState): { run: RunState; rng: Rng } {
   const s = seed ?? Math.floor(Math.random() * 2 ** 31);
   const rng = new Rng(s);
+  const hero = HERO_DEFS[meta?.hero ?? 'sig'] ?? HERO_DEFS.sig;
+  const asc = ascensionMods(meta?.ascension ?? 0);
+
+  // Ascension 3 removes a die; Ascension 11 adds a cursed one.
+  const bag = hero.bag.slice(0, Math.max(1, hero.bag.length + asc.startDice)).map((k) => ({ key: k }));
+  if (asc.extraCursedDie) bag.push({ key: 'cursed_d6' });
+
   const run: RunState = {
     seed: s,
     act: 1,
-    map: generateMap(1, rng),
+    map: generateMap(1, rng, asc.eliteWeightBonus),
     row: -1,
     col: 0,
     screen: 'map',
-    hp: 60,
-    maxHp: 60,
+    hp: hero.maxHp,
+    maxHp: hero.maxHp,
     gold: 0,
-    bag: DEFAULT_BAG.map((k) => ({ key: k })),
+    bag,
     bagCap: BAG_CAP,
-    loadout: [...DEFAULT_LOADOUT],
-    relics: [],
+    loadout: [...hero.loadout],
+    relics: [hero.startRelic],
     upgrades: [],
     slipCapBonus: 0,
     startSlipBonus: 0,
@@ -140,7 +162,20 @@ export function newRun(seed?: number): { run: RunState; rng: Rng } {
     nodesCleared: 0,
     totalDamage: 0,
     biggestHit: 0,
+    hero: hero.key,
+    ascension: meta?.ascension ?? 0,
+    pool: {
+      dice: meta ? availableDice(meta) : DICE_LIST.map((d) => d.key),
+      skills: meta ? availableSkills(meta) : SKILL_LIST.map((x) => x.key),
+      relics: meta ? availableRelics(meta) : RELICS.map((x) => x.key),
+    },
+    elitesKilled: 0,
+    bossesKilled: 0,
+    slipSpent: 0,
+    highestTier: 'NONE',
+    killedBy: null,
   };
+  if (hero.maxHp !== 60) run.hp = hero.maxHp;
   return { run, rng };
 }
 
@@ -225,6 +260,8 @@ function startCombat(run: RunState, encounterKey: string, rng: Rng): GameState {
     startSlip: 3 + run.startSlipBonus,
     slots: slotCount(run),
     act: run.act,
+    hero: run.hero,
+    ascension: run.ascension,
   });
   return state;
 }
@@ -243,15 +280,25 @@ export function finishCombat(run: RunState, rng: Rng): RunState {
   r.hp = Math.max(0, c.player.hp);
   r.totalDamage += c.stats.damageDealt;
   r.biggestHit = Math.max(r.biggestHit, c.stats.biggestHit);
+  r.slipSpent += c.stats.slipSpent;
+  for (const tier of ['OMEGA', 'DOUBLE', 'SIGMA'] as const) {
+    if (c.stats.sigmaCounts[tier] > 0) {
+      const order = ['NONE', 'SIGMA', 'DOUBLE', 'OMEGA'];
+      if (order.indexOf(tier) > order.indexOf(r.highestTier)) r.highestTier = tier;
+      break;
+    }
+  }
 
   if (c.phase === 'LOSE' || r.hp <= 0) {
     r.screen = 'dead';
+    r.killedBy = c.enemies.find((e) => e.hp > 0)?.name ?? 'something';
     return r;
   }
 
   r.nodesCleared += 1;
   const kind = r.nodeKind ?? 'battle';
-  if (kind === 'elite') { r.maxHp += ELITE_MAX_HP; r.hp += ELITE_MAX_HP; }
+  if (kind === 'elite') { r.maxHp += ELITE_MAX_HP; r.hp += ELITE_MAX_HP; r.elitesKilled += 1; }
+  if (kind === 'boss') r.bossesKilled += 1;
   const [lo, hi] = GOLD_BY_KIND[kind] ?? GOLD_BY_KIND.battle;
   let gold = lo + rng.int(hi - lo + 1);
   if (r.relics.includes('coin_purse')) gold = Math.floor(gold * 1.25);
@@ -262,11 +309,13 @@ export function finishCombat(run: RunState, rng: Rng): RunState {
   const skillCount = r.relics.includes('second_opinion') ? 4 : 3;
   const bump = kind === 'elite' || kind === 'boss';
 
+  const skillPool = SKILL_LIST.filter((x) => r.pool.skills.includes(x.key));
+  const dicePool = DICE_LIST.filter((x) => r.pool.dice.includes(x.key));
   r.offerSkills = kind === 'elite'
     ? []
-    : pickBy(SKILL_LIST, r.act, rng, skillCount, bump, r.loadout.filter(Boolean) as string[]);
-  r.offerDice = kind === 'elite' ? pickBy(DICE_LIST, r.act, rng, 2, true)
-    : kind === 'boss' ? pickBy(DICE_LIST, r.act, rng, 3, true)
+    : pickBy(skillPool, r.act, rng, skillCount, bump, r.loadout.filter(Boolean) as string[]);
+  r.offerDice = kind === 'elite' ? pickBy(dicePool, r.act, rng, 2, true)
+    : kind === 'boss' ? pickBy(dicePool, r.act, rng, 3, true)
     : [];
   r.offerRelic = (kind === 'elite' || kind === 'boss') ? pickRelic(r, rng, kind === 'boss') : null;
   r.doubleNextReward = false;
@@ -278,7 +327,8 @@ export function finishCombat(run: RunState, rng: Rng): RunState {
 
 function pickRelic(run: RunState, rng: Rng, bump: boolean): string | null {
   const owned = run.relics;
-  const pool = RELICS.filter((x) => !owned.includes(x.key))
+  const pool = RELICS.filter((x) => run.pool.relics.includes(x.key))
+    .filter((x) => !owned.includes(x.key))
     .filter((x) => x.key !== 'sixth_slot' || owned.includes('fifth_slot'));
   if (!pool.length) return null;
   return pickBy(pool, run.act, rng, 1, bump)[0] ?? null;
@@ -343,7 +393,7 @@ export function leaveNode(run: RunState): RunState {
     r.hp += BOSS_MAX_HP;
     if (r.act >= 3) { r.screen = 'won'; return r; }
     r.act += 1;
-    r.map = generateMap(r.act, new Rng(r.seed + r.act * 7919));
+    r.map = generateMap(r.act, new Rng(r.seed + r.act * 7919), ascensionMods(r.ascension).eliteWeightBonus);
     r.row = -1;
     r.col = 0;
   }
@@ -357,19 +407,21 @@ export function leaveNode(run: RunState): RunState {
 function buildShop(run: RunState, rng: Rng): ShopItem[] {
   const price: Record<Rarity, number> = { common: 45, uncommon: 85, rare: 150, legendary: 240 };
   const items: ShopItem[] = [];
-  for (const key of pickBy(DICE_LIST, run.act, rng, 3)) {
-    items.push({ kind: 'die', key, price: price[DICE_DEFS[key].rarity] });
+  const mult = ascensionMods(run.ascension).shopMult;
+  const px = (n: number) => Math.round(n * mult);
+  for (const key of pickBy(DICE_LIST.filter((x) => run.pool.dice.includes(x.key)), run.act, rng, 3)) {
+    items.push({ kind: 'die', key, price: px(price[DICE_DEFS[key].rarity]) });
   }
-  for (const key of pickBy(SKILL_LIST, run.act, rng, 3)) {
-    items.push({ kind: 'skill', key, price: 60 + Math.floor(rng.int(4) * 20) });
+  for (const key of pickBy(SKILL_LIST.filter((x) => run.pool.skills.includes(x.key)), run.act, rng, 3)) {
+    items.push({ kind: 'skill', key, price: px(60 + Math.floor(rng.int(4) * 20)) });
   }
-  const relicPool = RELICS.filter((x) => !run.relics.includes(x.key));
+  const relicPool = RELICS.filter((x) => run.pool.relics.includes(x.key) && !run.relics.includes(x.key));
   for (const key of pickBy(relicPool, run.act, rng, 2)) {
-    items.push({ kind: 'relic', key, price: 140 + rng.int(60) });
+    items.push({ kind: 'relic', key, price: px(140 + rng.int(60)) });
   }
   // Die removal is the most important item in the shop, and the escalating
   // price stops a player surgically sculpting a perfect bag by Act 3.
-  items.push({ kind: 'removal', key: 'removal', price: 60 + run.nodesCleared * 4 });
+  items.push({ kind: 'removal', key: 'removal', price: px(60 + run.nodesCleared * 4) });
   return items;
 }
 
@@ -403,7 +455,7 @@ export type ForgeKind = 'sharpen' | 'bevel' | 'flatten';
 
 export function restHeal(run: RunState): RunState {
   const r = structuredClone(run);
-  r.hp = Math.min(r.maxHp, r.hp + Math.floor(r.maxHp * 0.3));
+  r.hp = Math.min(r.maxHp, r.hp + Math.floor(r.maxHp * ascensionMods(r.ascension).restHealPct));
   r.screen = 'map';
   r.nodeKind = null;
   return r;
@@ -576,6 +628,24 @@ function applyEventAction(r: RunState, a: EventAction, rng: Rng, notes: string[]
 }
 
 // ---------------------------------------------------------------- helpers
+
+/** Snapshot for the meta layer once a run ends. */
+export function runOutcome(run: RunState): RunOutcome {
+  return {
+    won: run.screen === 'won',
+    act: run.act,
+    nodesCleared: run.nodesCleared,
+    elitesKilled: run.elitesKilled,
+    bossesKilled: run.bossesKilled,
+    biggestHit: run.biggestHit,
+    totalDamage: run.totalDamage,
+    slipSpent: run.slipSpent,
+    highestTier: run.highestTier,
+    killedBy: run.killedBy,
+    bag: run.bag.map((b) => b.key),
+    loadout: run.loadout.filter(Boolean) as string[],
+  };
+}
 
 export function relicDef(key: string): RelicDef | undefined {
   return RELIC_DEFS[key];
